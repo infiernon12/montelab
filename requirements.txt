@@ -1,0 +1,47 @@
+# MonteLab Dependencies - STABLE for Python 3.10.11
+# Tested and verified combination
+
+# Core Build Tools
+setuptools==68.2.2
+wheel==0.41.3
+pip==23.3.1
+
+# Build & Packaging
+nuitka==2.8.1
+pyinstaller==6.0.0
+
+# Deep Learning
+torch==2.0.1
+torchvision==0.15.2
+ultralytics==8.0.200
+
+# Computer Vision
+opencv-python==4.8.1.78
+numpy==1.24.4
+Pillow==10.0.1
+
+# GUI Framework
+PySide6==6.5.3
+shiboken6==6.5.3
+
+# System & Network
+requests==2.31.0
+urllib3==2.0.7
+psutil==5.9.6
+getmac==0.9.4
+wmi==1.5.1; sys_platform == "win32"
+
+# Screen Capture
+mss==9.0.1
+pyautogui==0.9.54
+
+# Additional Dependencies
+certifi==2023.7.22
+charset-normalizer==3.3.2
+idna==3.4
+scipy==1.11.4
+tqdm==4.66.1
+PyYAML==6.0.1
+pandas==2.0.3
+matplotlib==3.7.3
+seaborn==0.13.0

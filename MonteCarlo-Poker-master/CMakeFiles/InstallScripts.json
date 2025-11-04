@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"C:/MonteLab/Refactored/MonteCarlo-Poker-master/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

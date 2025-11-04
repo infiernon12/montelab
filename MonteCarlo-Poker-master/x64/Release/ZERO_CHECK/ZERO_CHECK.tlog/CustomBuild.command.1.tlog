@@ -1,0 +1,10 @@
+^C:\MONTELAB\REFACTORED\MONTECARLO-POKER-MASTER\CMAKEFILES\2EED7FF138809C1DFA55753EF83B7009\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/MonteLab/Refactored/MonteCarlo-Poker-master -BC:/MonteLab/Refactored/MonteCarlo-Poker-master --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file C:/MonteLab/Refactored/MonteCarlo-Poker-master/MonteCarloPoker.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
