@@ -1,4 +1,5 @@
 import logging
+import time
 from pathlib import Path
 from typing import List, Tuple
 import numpy as np
@@ -57,8 +58,11 @@ class TableCardDetector:
         """Detect cards with separate optimization for player and board cards"""
         if frame is None or frame.size == 0:
             return []
-        
+
         try:
+            # Start timing
+            start_time = time.perf_counter()
+
             # Optimized YOLO inference parameters
             results = self.model(
                 frame,
@@ -71,8 +75,12 @@ class TableCardDetector:
                 max_det=10,  # Maximum 10 detections (2 player + 5 board + margin)
                 agnostic_nms=True  # Faster NMS without class-specific logic
             )
+
+            inference_time = (time.perf_counter() - start_time) * 1000  # Convert to ms
+            logger.debug(f"⚡ YOLO inference: {inference_time:.2f}ms")
+
             all_detections = []
-            
+
             frame_height, frame_width = frame.shape[:2]
             
             for result in results:
@@ -341,6 +349,9 @@ class CardClassifierResNet:
             return []
 
         try:
+            # Start timing
+            start_time = time.perf_counter()
+
             # Filter out invalid crops and keep track of indices
             valid_crops = []
             valid_indices = []
@@ -353,19 +364,31 @@ class CardClassifierResNet:
                 return [("unknown", 0.0)] * len(crops)
 
             # Preprocess all crops using optimized cv2 pipeline
+            preprocess_start = time.perf_counter()
             batch_tensors = []
             for crop in valid_crops:
                 tensor = self._preprocess_crop(crop)
                 batch_tensors.append(tensor)
 
+            preprocess_time = (time.perf_counter() - preprocess_start) * 1000
+
             # Stack into batch and move to device
             batch = torch.stack(batch_tensors).to(self.device)
 
             # Single forward pass for all crops
+            inference_start = time.perf_counter()
             with torch.inference_mode():
                 outputs = self.model(batch)
                 probs = F.softmax(outputs, dim=1)
                 confidences, indices = torch.max(probs, dim=1)
+
+            inference_time = (time.perf_counter() - inference_start) * 1000
+            total_time = (time.perf_counter() - start_time) * 1000
+
+            logger.debug(f"⚡ ResNet batch ({len(valid_crops)} cards): "
+                        f"preprocess={preprocess_time:.2f}ms, "
+                        f"inference={inference_time:.2f}ms, "
+                        f"total={total_time:.2f}ms")
 
             # Process results
             results = [("unknown", 0.0)] * len(crops)
