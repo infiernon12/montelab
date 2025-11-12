@@ -38,6 +38,19 @@ class TableCardDetector:
                 logger.warning(f"Could not enable FP16: {e}")
                 self.use_half = False
 
+        # Enable torch.compile for PyTorch 2.0+ (GPU only)
+        if hasattr(torch, 'compile') and device == "cuda":
+            try:
+                # Compile the underlying model for inference optimization
+                self.model.model = torch.compile(
+                    self.model.model,
+                    mode="reduce-overhead",  # Best for inference
+                    fullgraph=True
+                )
+                logger.info("✅ YOLO optimized with torch.compile")
+            except Exception as e:
+                logger.warning(f"torch.compile failed for YOLO: {e}")
+
         logger.info("Card detector loaded successfully")
     
     def predict(self, frame: np.ndarray, confidence_threshold: float = 0.6) -> List[DetectedCard]:
@@ -54,7 +67,9 @@ class TableCardDetector:
                 iou=0.5,
                 imgsz=640,  # Explicit image size
                 half=self.use_half,  # FP16 inference on GPU
-                device=self.device
+                device=self.device,
+                max_det=10,  # Maximum 10 detections (2 player + 5 board + margin)
+                agnostic_nms=True  # Faster NMS without class-specific logic
             )
             all_detections = []
             
@@ -183,15 +198,16 @@ class TableCardDetector:
 
 class CardClassifierResNet:
     """ResNet-based card classification"""
-    
+
     def __init__(self, weights_path: str, device: str = "cpu"):
         self.device = device
         self.weights_path = weights_path
+        self.use_half = (device == "cuda")  # Enable FP16 only on GPU
         logger.info(f"Loading card classifier from {weights_path}")
-        
+
         if not Path(weights_path).exists():
             raise FileNotFoundError(f"Model weights not found: {weights_path}")
-        
+
         self._load_model()
         self._setup_transforms()
         logger.info("Card classifier loaded successfully")
@@ -223,7 +239,28 @@ class CardClassifierResNet:
         
         self.model.to(self.device)
         self.model.eval()
-        
+
+        # Enable half precision for GPU
+        if self.use_half:
+            try:
+                self.model = self.model.half()
+                logger.info("✅ FP16 half-precision enabled for ResNet")
+            except Exception as e:
+                logger.warning(f"Could not enable FP16 for ResNet: {e}")
+                self.use_half = False
+
+        # Enable torch.compile for PyTorch 2.0+ (GPU only)
+        if hasattr(torch, 'compile') and self.device == "cuda":
+            try:
+                self.model = torch.compile(
+                    self.model,
+                    mode="reduce-overhead",  # Best for inference
+                    fullgraph=True
+                )
+                logger.info("✅ ResNet optimized with torch.compile")
+            except Exception as e:
+                logger.warning(f"torch.compile failed for ResNet: {e}")
+
         self.class_names = [
             "ace of clubs", "ace of diamonds", "ace of hearts", "ace of spades",
             "eight of clubs", "eight of diamonds", "eight of hearts", "eight of spades",
@@ -265,6 +302,10 @@ class CardClassifierResNet:
         # Apply normalization
         tensor = self.normalize(tensor)
 
+        # Convert to half precision if enabled
+        if self.use_half:
+            tensor = tensor.half()
+
         return tensor
 
     def classify_crop(self, crop: np.ndarray) -> Tuple[str, float]:
@@ -275,7 +316,7 @@ class CardClassifierResNet:
         try:
             tensor = self._preprocess_crop(crop).unsqueeze(0).to(self.device)
 
-            with torch.no_grad():
+            with torch.inference_mode():
                 output = self.model(tensor)
                 probs = F.softmax(output, dim=1)
                 confidence, index = torch.max(probs, dim=1)
@@ -321,7 +362,7 @@ class CardClassifierResNet:
             batch = torch.stack(batch_tensors).to(self.device)
 
             # Single forward pass for all crops
-            with torch.no_grad():
+            with torch.inference_mode():
                 outputs = self.model(batch)
                 probs = F.softmax(outputs, dim=1)
                 confidences, indices = torch.max(probs, dim=1)

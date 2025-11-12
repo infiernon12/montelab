@@ -266,23 +266,36 @@ def initialize_services():
     Returns: (ml_service, analysis_service) or (None, None) on failure
     """
     try:
+        import torch
         from services.ml_service import MLService
         from services.analysis_service import AnalysisService
         from core.poker import EquityCalculator, CppMonteCarloBackend
-        
+
         # Model paths
         script_dir = Path(__file__).parent
-        
+
         yolo_path = script_dir / "models" / "board_player_detector_v4.pt"
         resnet_path = script_dir / "models" / "fine_tuned_resnet_cards_240EPOCH.pt"
-        
+
+        # Auto-detect GPU with fallback to CPU
+        logger.info("Detecting compute device...")
+        if torch.cuda.is_available():
+            device = "cuda"
+            logger.info(f"✅ GPU detected: {torch.cuda.get_device_name(0)}")
+            # Enable CUDA optimizations
+            torch.backends.cudnn.benchmark = True
+            torch.backends.cudnn.enabled = True
+        else:
+            device = "cpu"
+            logger.info("⚠️ GPU not available, using CPU")
+
         # Initialize ML service
-        logger.info("Initializing ML service...")
+        logger.info(f"Initializing ML service with device: {device}")
         if yolo_path.exists() and resnet_path.exists():
             ml_service = MLService.from_weights(
                 str(yolo_path),
                 str(resnet_path),
-                device="cpu"
+                device=device
             )
             logger.info("ML service initialized successfully")
         else:

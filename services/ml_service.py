@@ -35,7 +35,7 @@ class MLService:
             try:
                 _ = detector.predict(dummy_frame, confidence_threshold=0.9)
                 dummy_crop = np.zeros((224, 224, 3), dtype=np.uint8)
-                _ = classifier.classify_crop(dummy_crop)
+                _ = classifier.classify_batch([dummy_crop])  # Test batch path
                 logger.info("✅ Model warmup completed")
             except Exception as e:
                 logger.warning(f"Model warmup failed (non-critical): {e}")
