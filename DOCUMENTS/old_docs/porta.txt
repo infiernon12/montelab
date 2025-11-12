@@ -1,0 +1,3668 @@
+Структура проекта:
+
+/PoRTA_2/
+|-- MonteCarlo-Poker-master/
+|   |-- poker_test	  # ✅ Исполняемый файл-модуль с монте-карло на C++
+|-- main.py                # ✅ Точка входа
+|-- app_window.py          # ✅ Главный GUI класс
+|-- license_integration.py # ✅ Интеграция лицензии в приложение
+|-- core/                  # ✅ Бизнес-логика
+|   |-- constants.py       # ✅ Enum'ы и константы
+|   |-- data_models.py     # ✅ DataClass модели
+|   |-- hand_analyzer.py   # ✅ Анализ покерных рук
+|   |-- gto_engine.py      # ✅ GTO-чарты
+|-- ml/                    # ✅ ML компоненты
+|   |-- detector.py        # ✅ YOLO + ResNet
+|-- ui/                    # ✅ UI компоненты
+|   |-- widgets.py         # ✅ Кастомные виджеты
+|   |-- hwid_dialog.py     # ✅ Диалоговое окно с HWID
+|-- utils/                 # ✅ Утилиты
+|   |-- screen_capture.py  # ✅ Захват экрана
+|   |-- hwid_generator.py  # ✅ Генаратор уникального HWID
+|   |-- license_client.py  # ✅ лицензионный клиент
+
+Файлы и их содержимое:
+
+constants.py
+import logging
+from enum import Enum
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+class Position(Enum):
+    UTG = "UTG"
+    MP = "MP" 
+    CO = "CO"
+    BTN = "BTN"
+    SB = "SB"
+    BB = "BB"
+
+class Action(Enum):
+    FOLD = "FOLD"
+    CALL = "CALL"
+    RAISE = "RAISE"
+    ALL_IN = "ALL_IN"
+
+class GameStage(Enum):
+    PREFLOP = "Preflop"
+    FLOP = "Flop" 
+    TURN = "Turn"
+    RIVER = "River"
+
+class TableSize(Enum):
+    HEADS_UP = "heads_up"
+    THREE_MAX = "3max"  
+    FOUR_MAX = "4max" 
+    FIVE_MAX = "5max"  
+    SIX_MAX = "6max"  
+    SEVEN_MAX = "7max" 
+    EIGHT_MAX = "8max" 
+    NINE_MAX = "9max"  
+
+class GameType(Enum):
+    CASH = "Cash"
+    TOURNAMENT = "TTM"
+
+=======================
+
+data_models.py
+
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
+from .constants import TableSize, GameType, GameStage
+import random
+
+@dataclass(frozen=True)
+class Card:
+    """Represents a playing card"""
+    rank: str  # 2-9, T, J, Q, K, A
+    suit: str  # c, d, h, s
+    
+    def __post_init__(self):
+        if self.rank not in ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A']:
+            raise ValueError(f"Invalid rank: {self.rank}")
+        if self.suit not in ['c', 'd', 'h', 's']:
+            raise ValueError(f"Invalid suit: {self.suit}")
+    
+    def rank_value(self) -> int:
+        """Get numeric value of rank (2=2, ..., A=14)"""
+        rank_values = {
+            '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9,
+            'T': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14
+        }
+        return rank_values[self.rank]
+    
+    def __str__(self):
+        return f"{self.rank}{self.suit}"
+
+@dataclass
+class DetectedCard:
+    """Detected card with bounding box"""
+    bbox: Tuple[int, int, int, int]  # x1, y1, x2, y2
+    kind: str  # "player" or "board"
+    score: float
+    classification: Optional[str] = None
+
+@dataclass
+class GameState:
+    """Current game state"""
+    table_size: TableSize
+    game_type: GameType
+    stage: GameStage
+    player_cards: List[Card]
+    board_cards: List[Card]
+    
+    def get_stage_name(self) -> str:
+        return f"{self.stage.value} ({len(self.boardcards)} board cards)"
+
+
+====================================
+
+gto_engine.py
+
+from typing import Dict
+from .hand_analyzer import HandAnalyzer
+import logging
+
+logger = logging.getLogger(__name__)
+
+class OpenChartEngine:
+    """Extended GTO opening charts for all table sizes and game types"""
+    
+    def __init__(self):
+        self.charts = self._initialize_opening_charts()
+        self.hand_analyzer = HandAnalyzer()
+    
+    def _initialize_opening_charts(self) -> Dict[str, Dict[str, Dict[str, Dict[str, float]]]]:
+        """Initialize comprehensive opening charts"""
+        return {
+            "cash": {
+                "2max": {
+                    "BTN": {
+                        **{f"{rank}{rank}": 1.0 for rank in "AKQJT98765432"},
+                        "AKs": 1.0, "AQs": 1.0, "AJs": 1.0, "ATs": 0.95, "A9s": 0.85,
+                        "A8s": 0.8, "A7s": 0.75, "A6s": 0.7, "A5s": 0.75, "A4s": 0.75,
+                        "A3s": 0.75, "A2s": 0.7,
+                        "AKo": 1.0, "AQo": 0.9, "AJo": 0.85, "ATo": 0.75, "A9o": 0.6,
+                        "KQs": 1.0, "KJs": 0.9, "KTs": 0.85, "K9s": 0.75,
+                        "KQo": 0.8, "KJo": 0.7, "KTo": 0.6,
+                        "QJs": 0.9, "QTs": 0.85, "Q9s": 0.75,
+                        "QJo": 0.75, "QTo": 0.65,
+                        "JTs": 0.85, "J9s": 0.75,
+                        "T9s": 0.8, "98s": 0.75, "87s": 0.7, "76s": 0.65,
+                    },
+                    "BB": {
+                        **{f"{rank}{rank}": 1.0 for rank in "AKQJT98765432"},
+                        "AKs": 1.0, "AQs": 1.0, "AJs": 1.0, "ATs": 1.0, "A9s": 1.0,
+                        "A8s": 0.95, "A7s": 0.9, "A6s": 0.85, "A5s": 0.85, "A4s": 0.85,
+                        "A3s": 0.85, "A2s": 0.8,
+                        "AKo": 1.0, "AQo": 1.0, "AJo": 0.9, "ATo": 0.85, "A9o": 0.75,
+                        "KQs": 1.0, "KJs": 1.0, "KTs": 0.95, "K9s": 0.9,
+                        "KQo": 0.9, "KJo": 0.85, "KTo": 0.75,
+                        "QJs": 1.0, "QTs": 0.95, "Q9s": 0.9,
+                        "QJo": 0.85, "QTo": 0.8,
+                        "JTs": 1.0, "J9s": 0.9,
+                        "T9s": 0.95, "98s": 0.9, "87s": 0.85, "76s": 0.8,
+                    }
+                },
+                "4max": {
+                    "UTG": {
+                        **{f"{rank}{rank}": 1.0 for rank in "AKQJT9"},
+                        "88": 0.9, "77": 0.8, "66": 0.65,
+                        "AKs": 1.0, "AQs": 1.0, "AJs": 0.95, "ATs": 0.9,
+                        "AKo": 1.0, "AQo": 0.95, "AJo": 0.8,
+                        "KQs": 0.95, "KJs": 0.9,
+                        "KQo": 0.8, "KJo": 0.6,
+                        "QJs": 0.9, "JTs": 0.8,
+                    },
+                    "CO": {
+                        **{f"{rank}{rank}": 1.0 for rank in "AKQJT987"},
+                        "66": 0.8, "55": 0.7, "44": 0.6,
+                        "AKs": 1.0, "AQs": 1.0, "AJs": 1.0, "ATs": 0.95, "A9s": 0.8,
+                        "A8s": 0.7, "A7s": 0.6, "A6s": 0.6, "A5s": 0.7,
+                        "AKo": 1.0, "AQo": 1.0, "AJo": 0.9, "ATo": 0.8,
+                        "KQs": 1.0, "KJs": 0.95, "KTs": 0.9, "K9s": 0.8,
+                        "KQo": 0.9, "KJo": 0.8, "KTo": 0.7,
+                        "QJs": 0.95, "QTs": 0.9, "Q9s": 0.8,
+                        "QJo": 0.8, "QTo": 0.7,
+                        "JTs": 0.9, "J9s": 0.8, "T9s": 0.8, "98s": 0.8, "87s": 0.7,
+                    },
+                    "BTN": {
+                        **{f"{rank}{rank}": 1.0 for rank in "AKQJT9876543"},
+                        "22": 0.7,
+                        "AKs": 1.0, "AQs": 1.0, "AJs": 1.0, "ATs": 1.0, "A9s": 0.9,
+                        "A8s": 0.85, "A7s": 0.8, "A6s": 0.7, "A5s": 0.8, "A4s": 0.8,
+                        "A3s": 0.8, "A2s": 0.75,
+                        "AKo": 1.0, "AQo": 1.0, "AJo": 0.95, "ATo": 0.9, "A9o": 0.8,
+                        "KQs": 1.0, "KJs": 1.0, "KTs": 0.95, "K9s": 0.9, "K8s": 0.8,
+                        "K7s": 0.7, "K6s": 0.65,
+                        "KQo": 1.0, "KJo": 0.9, "KTo": 0.85, "K9o": 0.75,
+                        "QJs": 1.0, "QTs": 0.95, "Q9s": 0.9, "Q8s": 0.8,
+                        "QJo": 0.9, "QTo": 0.8, "Q9o": 0.7,
+                        "JTs": 0.95, "J9s": 0.9, "J8s": 0.8, "J7s": 0.7,
+                        "JTo": 0.8, "J9o": 0.7,
+                        "T9s": 0.9, "T8s": 0.8, "T7s": 0.7,
+                        "98s": 0.85, "97s": 0.8, "87s": 0.8, "76s": 0.7, "65s": 0.6,
+                    },
+                    "BB": {
+                        **{f"{rank}{rank}": 1.0 for rank in "AKQJT9876543"},
+                        "22": 0.8,
+                        "AKs": 1.0, "AQs": 1.0, "AJs": 1.0, "ATs": 1.0, "A9s": 1.0,
+                        "A8s": 0.9, "A7s": 0.85, "A6s": 0.8, "A5s": 0.8, "A4s": 0.8,
+                        "A3s": 0.8, "A2s": 0.75,
+                        "AKo": 1.0, "AQo": 1.0, "AJo": 1.0, "ATo": 0.9, "A9o": 0.8,
+                        "KQs": 1.0, "KJs": 1.0, "KTs": 1.0, "K9s": 0.9, "K8s": 0.85,
+                        "K7s": 0.8, "K6s": 0.75,
+                        "KQo": 1.0, "KJo": 0.9, "KTo": 0.8, "K9o": 0.75,
+                        "QJs": 1.0, "QTs": 1.0, "Q9s": 0.9, "Q8s": 0.85,
+                        "QJo": 0.9, "QTo": 0.85, "Q9o": 0.75,
+                        "JTs": 1.0, "J9s": 0.9, "J8s": 0.85,
+                        "T9s": 0.95, "T8s": 0.9, "98s": 0.9, "87s": 0.85, "76s": 0.8,
+                    }
+                },
+                "6max": {
+                    "UTG": {
+                        **{f"{rank}{rank}": 1.0 for rank in "AKQJT98"},
+                        "77": 0.85, "66": 0.7, "55": 0.6,
+                        "AKs": 1.0, "AQs": 1.0, "AJs": 0.9, "ATs": 0.85,
+                        "AKo": 1.0, "AQo": 0.9, "AJo": 0.75,
+                        "KQs": 0.9, "KJs": 0.85,
+                        "KQo": 0.7, "KJo": 0.55,
+                        "QJs": 0.85, "JTs": 0.75,
+                    },
+                    "MP": {
+                        **{f"{rank}{rank}": 1.0 for rank in "AKQJT9876"},
+                        "55": 0.75, "44": 0.6, "33": 0.5,
+                        "AKs": 1.0, "AQs": 1.0, "AJs": 1.0, "ATs": 0.95, "A9s": 0.65,
+                        "AKo": 1.0, "AQo": 0.95, "AJo": 0.85, "ATo": 0.75,
+                        "KQs": 1.0, "KJs": 0.95, "KTs": 0.85,
+                        "KQo": 0.9, "KJo": 0.75, "KTo": 0.65,
+                        "QJs": 0.9, "QTs": 0.85, "JTs": 0.85,
+                        "T9s": 0.75, "98s": 0.65,
+                    },
+                    "CO": {
+                        **{f"{rank}{rank}": 1.0 for rank in "AKQJT987654"},
+                        "33": 0.7, "22": 0.5,
+                        "AKs": 1.0, "AQs": 1.0, "AJs": 1.0, "ATs": 1.0, "A9s": 0.85,
+                        "A8s": 0.75, "A7s": 0.65, "A6s": 0.65, "A5s": 0.75,
+                        "AKo": 1.0, "AQo": 1.0, "AJo": 0.9, "ATo": 0.85,
+                        "KQs": 1.0, "KJs": 1.0, "KTs": 0.9, "K9s": 0.85,
+                        "KQo": 0.9, "KJo": 0.85, "KTo": 0.75,
+                        "QJs": 1.0, "QTs": 0.9, "Q9s": 0.85,
+                        "QJo": 0.8, "QTo": 0.75,
+                        "JTs": 0.9, "J9s": 0.85, "T9s": 0.85, "98s": 0.85, "87s": 0.75, "76s": 0.7,
+                    },
+                    "BTN": {
+                        **{f"{rank}{rank}": 1.0 for rank in "AKQJT98765432"},
+                        "AKs": 1.0, "AQs": 1.0, "AJs": 1.0, "ATs": 1.0, "A9s": 1.0,
+                        "A8s": 0.9, "A7s": 0.85, "A6s": 0.75, "A5s": 0.8, "A4s": 0.8,
+                        "A3s": 0.8, "A2s": 0.75,
+                        "AKo": 1.0, "AQo": 1.0, "AJo": 1.0, "ATo": 0.9, "A9o": 0.85,
+                        "KQs": 1.0, "KJs": 1.0, "KTs": 0.95, "K9s": 0.9, "K8s": 0.85,
+                        "K7s": 0.75, "K6s": 0.7, "K5s": 0.65,
+                        "KQo": 1.0, "KJo": 0.9, "KTo": 0.85, "K9o": 0.8,
+                        "QJs": 1.0, "QTs": 1.0, "Q9s": 0.9, "Q8s": 0.85, "Q7s": 0.75,
+                        "QJo": 0.9, "QTo": 0.85, "Q9o": 0.75,
+                        "JTs": 0.95, "J9s": 0.9, "J8s": 0.85, "J7s": 0.75,
+                        "JTo": 0.85, "J9o": 0.75,
+                        "T9s": 0.9, "T8s": 0.85, "T7s": 0.75, "T6s": 0.7,
+                        "T9o": 0.85, "T8o": 0.75,
+                        "98s": 0.9, "97s": 0.85, "96s": 0.8,
+                        "98o": 0.75, "97o": 0.7,
+                        "87s": 0.85, "86s": 0.75, "85s": 0.7,
+                        "87o": 0.7, "76s": 0.75, "75s": 0.7, "65s": 0.65, "54s": 0.6,
+                    },
+                    "SB": {
+                        **{f"{rank}{rank}": 1.0 for rank in "AKQJT98765432"},
+                        "AKs": 1.0, "AQs": 1.0, "AJs": 1.0, "ATs": 1.0, "A9s": 0.9,
+                        "A8s": 0.85, "A7s": 0.75, "A6s": 0.7, "A5s": 0.75,
+                        "AKo": 1.0, "AQo": 1.0, "AJo": 0.9, "ATo": 0.85,
+                        "KQs": 1.0, "KJs": 0.95, "KTs": 0.9, "K9s": 0.8,
+                        "KQo": 0.9, "KJo": 0.8, "KTo": 0.75,
+                        "QJs": 0.95, "QTs": 0.9, "Q9s": 0.85,
+                        "QJo": 0.8, "QTo": 0.75,
+                        "JTs": 0.9, "J9s": 0.8, "T9s": 0.8, "98s": 0.8, "87s": 0.75, "76s": 0.7,
+                    },
+                    "BB": {
+                        **{f"{rank}{rank}": 1.0 for rank in "AKQJT98765432"},
+                        "AKs": 1.0, "AQs": 1.0, "AJs": 1.0, "ATs": 1.0, "A9s": 1.0,
+                        "A8s": 0.95, "A7s": 0.9, "A6s": 0.85, "A5s": 0.85, "A4s": 0.85,
+                        "A3s": 0.85, "A2s": 0.8,
+                        "AKo": 1.0, "AQo": 1.0, "AJo": 1.0, "ATo": 0.9, "A9o": 0.85,
+                        "A8o": 0.75, "A7o": 0.7, "A6o": 0.65, "A5o": 0.7,
+                        "KQs": 1.0, "KJs": 1.0, "KTs": 1.0, "K9s": 1.0, "K8s": 0.9,
+                        "K7s": 0.85, "K6s": 0.8, "K5s": 0.75,
+                        "KQo": 1.0, "KJo": 0.9, "KTo": 0.85, "K9o": 0.8,
+                        "QJs": 1.0, "QTs": 1.0, "Q9s": 0.9, "Q8s": 0.85, "Q7s": 0.75,
+                        "QJo": 0.9, "QTo": 0.85, "Q9o": 0.75,
+                        "JTs": 1.0, "J9s": 0.9, "J8s": 0.85, "J7s": 0.75,
+                        "JTo": 0.85, "J9o": 0.75,
+                        "T9s": 0.95, "T8s": 0.9, "T7s": 0.85, "T6s": 0.8,
+                        "T9o": 0.85, "T8o": 0.75,
+                        "98s": 0.9, "97s": 0.85, "96s": 0.8,
+                        "98o": 0.75, "87s": 0.85, "86s": 0.8, "76s": 0.8, "65s": 0.7, "54s": 0.65,
+                    }
+                },
+                "9max": {
+                    "UTG": {
+                        **{f"{rank}{rank}": 1.0 for rank in "AKQJT9"},
+                        "88": 0.9, "77": 0.7,
+                        "AKs": 1.0, "AQs": 1.0, "AJs": 0.85,
+                        "AKo": 1.0, "AQo": 0.85,
+                        "KQs": 0.85, "KJs": 0.75,
+                        "QJs": 0.8,
+                    },
+                    "MP1": {
+                        **{f"{rank}{rank}": 1.0 for rank in "AKQJT98"},
+                        "77": 0.8, "66": 0.6,
+                        "AKs": 1.0, "AQs": 1.0, "AJs": 0.9, "ATs": 0.8,
+                        "AKo": 1.0, "AQo": 0.9, "AJo": 0.7,
+                        "KQs": 0.9, "KJs": 0.8,
+                        "KQo": 0.6,
+                        "QJs": 0.85, "JTs": 0.7,
+                    },
+                    "MP2": {
+                        **{f"{rank}{rank}": 1.0 for rank in "AKQJT987"},
+                        "66": 0.75, "55": 0.6,
+                        "AKs": 1.0, "AQs": 1.0, "AJs": 0.95, "ATs": 0.9, "A9s": 0.6,
+                        "AKo": 1.0, "AQo": 0.95, "AJo": 0.8, "ATo": 0.7,
+                        "KQs": 0.95, "KJs": 0.85, "KTs": 0.8,
+                        "KQo": 0.8, "KJo": 0.65,
+                        "QJs": 0.9, "QTs": 0.8, "JTs": 0.8,
+                        "T9s": 0.7,
+                    },
+                    "CO": {
+                        **{f"{rank}{rank}": 1.0 for rank in "AKQJT98765"},
+                        "44": 0.6, "33": 0.5,
+                        "AKs": 1.0, "AQs": 1.0, "AJs": 1.0, "ATs": 0.95, "A9s": 0.8,
+                        "A8s": 0.7, "A7s": 0.6, "A6s": 0.6, "A5s": 0.7,
+                        "AKo": 1.0, "AQo": 1.0, "AJo": 0.9, "ATo": 0.8,
+                        "KQs": 1.0, "KJs": 0.95, "KTs": 0.85, "K9s": 0.8,
+                        "KQo": 0.85, "KJo": 0.75, "KTo": 0.7,
+                        "QJs": 0.95, "QTs": 0.85, "Q9s": 0.8,
+                        "QJo": 0.75, "QTo": 0.7,
+                        "JTs": 0.85, "J9s": 0.8, "T9s": 0.8, "98s": 0.8, "87s": 0.7,
+                    },
+                    "BTN": {
+                        **{f"{rank}{rank}": 1.0 for rank in "AKQJT9876543"},
+                        "22": 0.6,
+                        "AKs": 1.0, "AQs": 1.0, "AJs": 1.0, "ATs": 1.0, "A9s": 0.9,
+                        "A8s": 0.85, "A7s": 0.8, "A6s": 0.7, "A5s": 0.75, "A4s": 0.75,
+                        "A3s": 0.75, "A2s": 0.7,
+                        "AKo": 1.0, "AQo": 1.0, "AJo": 0.95, "ATo": 0.85, "A9o": 0.75,
+                        "KQs": 1.0, "KJs": 1.0, "KTs": 0.9, "K9s": 0.85, "K8s": 0.8,
+                        "K7s": 0.7, "K6s": 0.65,
+                        "KQo": 0.95, "KJo": 0.85, "KTo": 0.8, "K9o": 0.7,
+                        "QJs": 1.0, "QTs": 0.9, "Q9s": 0.85, "Q8s": 0.8,
+                        "QJo": 0.85, "QTo": 0.75, "Q9o": 0.7,
+                        "JTs": 0.9, "J9s": 0.85, "J8s": 0.8, "J7s": 0.7,
+                        "JTo": 0.8, "J9o": 0.7,
+                        "T9s": 0.85, "T8s": 0.8, "T7s": 0.7,
+                        "98s": 0.8, "97s": 0.75, "87s": 0.75, "76s": 0.7, "65s": 0.6,
+                    },
+                    "SB": {
+                        **{f"{rank}{rank}": 1.0 for rank in "AKQJT98765432"},
+                        "AKs": 1.0, "AQs": 1.0, "AJs": 1.0, "ATs": 1.0, "A9s": 0.85,
+                        "A8s": 0.8, "A7s": 0.7, "A6s": 0.65, "A5s": 0.7,
+                        "AKo": 1.0, "AQo": 1.0, "AJo": 0.85, "ATo": 0.8,
+                        "KQs": 1.0, "KJs": 0.9, "KTs": 0.85, "K9s": 0.75,
+                        "KQo": 0.85, "KJo": 0.75, "KTo": 0.7,
+                        "QJs": 0.9, "QTs": 0.85, "Q9s": 0.8,
+                        "QJo": 0.75, "QTo": 0.7,
+                        "JTs": 0.85, "J9s": 0.75, "T9s": 0.75, "98s": 0.75, "87s": 0.7,
+                    },
+                    "BB": {
+                        **{f"{rank}{rank}": 1.0 for rank in "AKQJT98765432"},
+                        "AKs": 1.0, "AQs": 1.0, "AJs": 1.0, "ATs": 1.0, "A9s": 1.0,
+                        "A8s": 0.9, "A7s": 0.85, "A6s": 0.8, "A5s": 0.8, "A4s": 0.8,
+                        "A3s": 0.8, "A2s": 0.75,
+                        "AKo": 1.0, "AQo": 1.0, "AJo": 1.0, "ATo": 0.85, "A9o": 0.8,
+                        "A8o": 0.7, "A7o": 0.65, "A6o": 0.6, "A5o": 0.65,
+                        "KQs": 1.0, "KJs": 1.0, "KTs": 0.95, "K9s": 0.9, "K8s": 0.85,
+                        "K7s": 0.8, "K6s": 0.75,
+                        "KQo": 1.0, "KJo": 0.85, "KTo": 0.8, "K9o": 0.75,
+                        "QJs": 1.0, "QTs": 0.95, "Q9s": 0.85, "Q8s": 0.8,
+                        "QJo": 0.85, "QTo": 0.8, "Q9o": 0.7,
+                        "JTs": 0.95, "J9s": 0.85, "J8s": 0.8,
+                        "T9s": 0.9, "T8s": 0.85, "98s": 0.85, "87s": 0.8, "76s": 0.75,
+                    }
+                }
+            },
+            # TTM charts (tighter ranges)
+            "ttm": {
+                "2max": {
+                    "BTN": {
+                        **{f"{rank}{rank}": 1.0 for rank in "AKQJT987654"},
+                        "33": 0.8, "22": 0.7,
+                        "AKs": 1.0, "AQs": 1.0, "AJs": 1.0, "ATs": 0.9, "A9s": 0.8,
+                        "A8s": 0.75, "A7s": 0.7, "A6s": 0.65, "A5s": 0.7, "A4s": 0.7,
+                        "A3s": 0.7, "A2s": 0.65,
+                        "AKo": 1.0, "AQo": 0.85, "AJo": 0.8, "ATo": 0.7, "A9o": 0.55,
+                        "KQs": 1.0, "KJs": 0.85, "KTs": 0.8, "K9s": 0.7,
+                        "KQo": 0.75, "KJo": 0.65, "KTo": 0.55,
+                        "QJs": 0.85, "QTs": 0.8, "Q9s": 0.7,
+                        "QJo": 0.7, "QTo": 0.6,
+                        "JTs": 0.8, "J9s": 0.7,
+                        "T9s": 0.75, "98s": 0.7, "87s": 0.65,
+                    },
+                    "BB": {
+                        **{f"{rank}{rank}": 1.0 for rank in "AKQJT987654"},
+                        "33": 0.9, "22": 0.8,
+                        "AKs": 1.0, "AQs": 1.0, "AJs": 1.0, "ATs": 1.0, "A9s": 0.95,
+                        "A8s": 0.9, "A7s": 0.85, "A6s": 0.8, "A5s": 0.8, "A4s": 0.8,
+                        "A3s": 0.8, "A2s": 0.75,
+                        "AKo": 1.0, "AQo": 1.0, "AJo": 0.85, "ATo": 0.8, "A9o": 0.7,
+                        "KQs": 1.0, "KJs": 1.0, "KTs": 0.9, "K9s": 0.85,
+                        "KQo": 0.85, "KJo": 0.8, "KTo": 0.7,
+                        "QJs": 1.0, "QTs": 0.9, "Q9s": 0.85,
+                        "QJo": 0.8, "QTo": 0.75,
+                        "JTs": 0.95, "J9s": 0.85,
+                        "T9s": 0.9, "98s": 0.85, "87s": 0.8,
+                    }
+                },
+                # Аналогично для 4max, 6max, 9max TTM...
+                # (Сокращено для читаемости, но должны быть реализованы все размеры столов)
+            }
+        }
+    
+    def get_opening_recommendation(self, hand_key: str, position: str, 
+                                 table_size: str = "6max", game_type: str = "cash") -> float:
+        """Get opening frequency for a hand in given position and game type"""
+        chart = self.charts.get(game_type, {}).get(table_size, {}).get(position, {})
+        return chart.get(hand_key, 0.0)
+    
+    def get_all_position_recommendations(self, hand_key: str, table_size: str = "6max", 
+                                       game_type: str = "cash") -> Dict[str, float]:
+        """Get recommendations for all positions at given table size and game type"""
+        position_map = {
+            "2max": ["BTN", "BB"],
+            "4max": ["UTG", "CO", "BTN", "BB"],
+            "6max": ["UTG", "MP", "CO", "BTN", "SB", "BB"],
+            "9max": ["UTG", "MP1", "MP2", "CO", "BTN", "SB", "BB"]
+        }
+        
+        positions = position_map.get(table_size, ["UTG", "MP", "CO", "BTN", "SB", "BB"])
+        recommendations = {}
+        
+        for pos in positions:
+            frequency = self.get_opening_recommendation(hand_key, pos, table_size, game_type)
+            recommendations[pos] = frequency
+        
+        return recommendations
+
+=======================
+
+hand_analyzer.py
+import logging
+from typing import List, Dict, Optional, Tuple
+from collections import Counter
+from .data_models import Card
+from .constants import GameStage
+import random
+from itertools import combinations
+from PoRTA_2.monte_carlo_engine import MonteCarloEngine
+
+logger = logging.getLogger(__name__)
+
+class HandAnalyzer:
+    
+    #ranks_order = '23456789TJQKA'
+    rank_values = {r: i+2 for i, r in enumerate('23456789TJQKA')}
+    rank_values['A'] = 14  # Туз = 14, кроме wheel
+    
+    # Константы
+    MIN_CARDS_FOR_TEXTURE = 3
+    MIN_CARDS_FOR_STRAIGHT = 5
+    CARDS_IN_HAND = 2
+    MAX_BOARD_CARDS = 5
+    WHEEL_RANKS = {2, 3, 4, 5, 14}
+    VALID_RANKS = set('23456789TJQKA')
+    VALID_SUITS = set('cdhs')
+    
+    # Базовые значения для типов рук (с большими разрывами для кикеров)
+    HAND_TYPE_BASE = {
+        'high_card': 0,
+        'one_pair': 10000000,
+        'two_pair': 20000000,
+        'three_kind': 30000000,
+        'straight': 40000000,
+        'flush': 50000000,
+        'full_house': 60000000,
+        'four_kind': 70000000,
+        'straight_flush': 80000000
+    }
+    
+    def __init__(self):
+        # Кэш для часто используемых вычислений
+        self._hand_strength_cache = {}
+        self._equity_cache = {}
+
+        try:
+            self.monte_carlo_engine = MonteCarloEngine()
+            self.use_cpp_monte_carlo = True
+            logger.info("C++ Monte Carlo engine enabled")
+        except Exception as e:
+            logger.warning(f"C++ Monte Carlo not available: {e}, using Python fallback")
+            self.monte_carlo_engine = None
+            self.use_cpp_monte_carlo = False
+
+    def simulate_equity(self, hole_cards: List[Card], board_cards: List[Card], 
+                       num_opponents: int = 1, iterations: int = 10000) -> Dict[str, float]:
+        """Optimized equity simulation with C++ Monte Carlo backend"""
+        
+        # Используем C++ если доступен
+        if self.use_cpp_monte_carlo and self.monte_carlo_engine:
+            # Увеличиваем количество итераций для C++ (он быстрый)
+            cpp_iterations = max(iterations * 10, 100000)  # Минимум 100k итераций
+            
+            result = self.monte_carlo_engine.calculate_equity(
+                hole_cards=hole_cards,
+                board_cards=board_cards,
+                opponents=num_opponents,
+                iterations=cpp_iterations
+            )
+            
+            if 'error' not in result:
+                logger.info(f"C++ Monte Carlo completed {result['simulations_completed']} iterations")
+                return result
+            else:
+                logger.warning(f"C++ Monte Carlo failed: {result['error']}, falling back to Python")
+
+        else:
+            logger.error("C++ Monte Carlo engine not available")
+            return {'error': 'Monte Carlo simulation unavailable'}
+    
+        
+    @staticmethod
+    def parse_card_string(card_str: str) -> Optional[Card]:
+        """Парсинг карты из строки с валидацией"""
+        if not card_str or len(card_str.strip()) < 2:
+            return None
+        
+        card_str = card_str.strip().upper()
+        if len(card_str) != 2:
+            return None
+        
+        rank, suit = card_str[0], card_str[1].lower()
+        
+        if rank not in HandAnalyzer.VALID_RANKS or suit not in HandAnalyzer.VALID_SUITS:
+            return None
+        
+        return Card(rank, suit)
+    
+    def get_hand_key(self, hole_cards: List[Card]) -> str:
+        """Получить ключ руки для анализа (AA, AKs, AKo, etc.)"""
+        if len(hole_cards) != 2:
+            return ""
+        
+        c1, c2 = hole_cards
+        
+        if c1.rank == c2.rank:  
+            return f"{c1.rank}{c1.rank}"
+        
+        if c1.rank_value() > c2.rank_value():
+            high, low = c1, c2
+        else:
+            high, low = c2, c1
+        
+        suffix = "s" if high.suit == low.suit else "o"
+        return f"{high.rank}{low.rank}{suffix}"
+        
+    def determine_game_stage(self, board_cards: List[Card]) -> GameStage:
+        """Определить текущую стадию игры"""
+        num_board_cards = len(board_cards)
+        
+        stage_map = {
+            0: GameStage.PREFLOP, 
+            3: GameStage.FLOP, 
+            4: GameStage.TURN, 
+            5: GameStage.RIVER
+        }
+        
+        return stage_map.get(num_board_cards, GameStage.PREFLOP)
+
+    def analyze_board_texture(self, board_cards: List[Card]) -> Dict[str, any]:
+        """Анализ текстуры борда"""
+        if len(board_cards) < self.MIN_CARDS_FOR_TEXTURE:
+            return {"error": "Need at least 3 board cards for texture analysis"}
+        
+        suit_counter = Counter(card.suit for card in board_cards)
+        rank_counter = Counter(card.rank for card in board_cards)
+        rank_values = sorted([card.rank_value() for card in board_cards])
+        
+        max_suit_count = max(suit_counter.values())
+        unique_suits = len(suit_counter)
+        max_rank_count = max(rank_counter.values())
+        
+        return {
+            "monotone": max_suit_count >= 3,
+            "two_tone": sum(1 for count in suit_counter.values() if count >= 2) >= 2,
+            "rainbow": unique_suits >= 3,
+            "paired": max_rank_count >= 2,
+            "coordinated": self._is_coordinated_board(rank_values),
+            "straight_draws": self._count_straight_draws(rank_values),
+            "flush_draw": max_suit_count == 2,
+            "dry": max_suit_count == 1 and not self._is_coordinated_board(rank_values)
+        }
+
+    def _is_coordinated_board(self, sorted_ranks: List[int]) -> bool:
+        """Проверка связности борда"""
+        if len(sorted_ranks) < 2:
+            return False
+        
+        for i in range(len(sorted_ranks) - 1):
+            gap = sorted_ranks[i + 1] - sorted_ranks[i]
+            if gap <= 2:
+                return True
+        return False
+    
+    def _count_straight_draws(self, sorted_ranks: List[int]) -> int:
+        """Подсчет стрит-дро на борде"""
+        unique_ranks = sorted(set(sorted_ranks))
+        draws = 0
+        
+        # Обычные стриты
+        for start in range(2, 11):
+            straight_ranks = list(range(start, start + 5))
+            board_in_straight = [r for r in unique_ranks if r in straight_ranks]
+            if len(board_in_straight) >= 3:
+                draws += 1
+        
+        # Wheel
+        wheel_ranks = [14, 2, 3, 4, 5]
+        board_in_wheel = [r for r in unique_ranks if r in wheel_ranks]
+        if len(board_in_wheel) >= 3:
+            draws += 1
+        
+        return draws
+
+    def calculate_hand_strength(self, hole_cards: List[Card], board_cards: List[Card]) -> Dict[str, any]:
+        """Вычислить силу руки и ауты"""
+        # Валидация
+        if not isinstance(hole_cards, list) or not isinstance(board_cards, list):
+            return {"error": "Cards must be provided as lists"}
+        
+        if len(hole_cards) != self.CARDS_IN_HAND:
+            return {"error": "Need exactly 2 hole cards"}
+        
+        if len(board_cards) > self.MAX_BOARD_CARDS:
+            return {"error": "Board cannot have more than 5 cards"}
+        
+        all_cards = hole_cards + board_cards
+        if len(set((c.rank, c.suit) for c in all_cards)) != len(all_cards):
+            return {"error": "Duplicate cards detected"}
+        
+        # Оценка текущей силы
+        best_hand, hand_strength = self.get_best_5_card_hand(all_cards)
+        current_strength = self._get_hand_description(best_hand)
+        
+        # Расчет аутов только если игра не завершена
+        outs_analysis = {}
+        if len(board_cards) < 5:
+            outs_analysis = self._calculate_outs(hole_cards, board_cards)
+        
+        return {
+            "current_hand": current_strength,
+            "hand_strength_numeric": hand_strength,
+            "best_5_cards": [f"{c.rank}{c.suit}" for c in best_hand],
+            "outs_analysis": outs_analysis,
+            "total_outs": sum(outs_analysis.values()) if outs_analysis else 0
+        }
+
+    def get_best_5_card_hand(self, cards: List[Card]) -> Tuple[List[Card], int]:
+        """Найти лучшую 5-карточную руку и ее численную силу"""
+        if len(cards) < 5:
+            return cards, self._evaluate_hand_strength_numeric(cards)
+        
+        if len(cards) == 5:
+            return cards, self._evaluate_hand_strength_numeric(cards)
+        
+        # Перебираем все комбинации по 5 карт
+        best_hand = None
+        best_strength = -1
+        
+        for combo in combinations(cards, 5):
+            combo_list = list(combo)
+            strength = self._evaluate_hand_strength_numeric(combo_list)
+            if strength > best_strength:
+                best_strength = strength
+                best_hand = combo_list
+        
+        return best_hand, best_strength
+
+    def _evaluate_hand_strength_numeric(self, cards: List[Card]) -> int:
+        """Точная численная оценка силы руки"""
+        if len(cards) < 2:
+            return 0
+        
+        # Кэширование для оптимизации
+        cards_key = tuple(sorted((c.rank, c.suit) for c in cards))
+        if cards_key in self._hand_strength_cache:
+            return self._hand_strength_cache[cards_key]
+        
+        rank_values = [card.rank_value() for card in cards]
+        rank_counts = Counter(rank_values)
+        suit_counts = Counter(card.suit for card in cards)
+        
+        # Сортируем ранги: сначала по частоте, потом по значению
+        ranks_by_count = sorted(rank_counts.items(), key=lambda x: (x[1], x[0]), reverse=True)
+        sorted_counts = sorted(rank_counts.values(), reverse=True)
+        
+        is_flush = max(suit_counts.values()) >= 5
+        is_straight, straight_high = self._check_straight_with_high(rank_values)
+        
+        strength = 0
+        
+        if is_straight and is_flush:
+            # Стрит-флеш
+            strength = self.HAND_TYPE_BASE['straight_flush'] + straight_high
+            
+        elif sorted_counts[0] == 4:
+            # Каре
+            quad_rank = ranks_by_count[0][0]
+            kicker = ranks_by_count[1][0] if len(ranks_by_count) > 1 else 0
+            strength = self.HAND_TYPE_BASE['four_kind'] + quad_rank * 100 + kicker
+            
+        elif sorted_counts[0] == 3 and len(sorted_counts) > 1 and sorted_counts[1] >= 2:
+            # Фулл-хаус
+            trips_rank = ranks_by_count[0][0]
+            pair_rank = ranks_by_count[1][0]
+            strength = self.HAND_TYPE_BASE['full_house'] + trips_rank * 100 + pair_rank
+            
+        elif is_flush:
+            # Флеш
+            flush_suit = max(suit_counts.keys(), key=suit_counts.get)
+            flush_cards = [card for card in cards if card.suit == flush_suit]
+            flush_values = sorted([card.rank_value() for card in flush_cards], reverse=True)[:5]
+            kicker_score = sum(flush_values[i] * (15 ** (4-i)) for i in range(len(flush_values)))
+            strength = self.HAND_TYPE_BASE['flush'] + kicker_score
+            
+        elif is_straight:
+            # Стрит
+            strength = self.HAND_TYPE_BASE['straight'] + straight_high
+            
+        elif sorted_counts[0] == 3:
+            # Сет
+            trips_rank = ranks_by_count[0][0]
+            kickers = sorted([r for r, c in ranks_by_count[1:]], reverse=True)[:2]
+            kicker_score = sum(kickers[i] * (15 ** (1-i)) for i in range(len(kickers)))
+            strength = self.HAND_TYPE_BASE['three_kind'] + trips_rank * 1000 + kicker_score
+            
+        elif len(sorted_counts) > 1 and sorted_counts[0] == 2 and sorted_counts[1] == 2:
+            # Две пары
+            pairs = sorted([r for r, c in ranks_by_count if c == 2], reverse=True)[:2]
+            kicker = max([r for r, c in ranks_by_count if c == 1], default=0)
+            strength = self.HAND_TYPE_BASE['two_pair'] + pairs[0] * 1000 + pairs[1] * 50 + kicker
+            
+        elif sorted_counts[0] == 2:
+            # Пара
+            pair_rank = ranks_by_count[0][0]
+            kickers = sorted([r for r, c in ranks_by_count[1:]], reverse=True)[:3]
+            kicker_score = sum(kickers[i] * (15 ** (2-i)) for i in range(len(kickers)))
+            strength = self.HAND_TYPE_BASE['one_pair'] + pair_rank * 10000 + kicker_score
+            
+        else:
+            # Старшая карта
+            high_cards = sorted(rank_values, reverse=True)[:5]
+            kicker_score = sum(high_cards[i] * (15 ** (4-i)) for i in range(len(high_cards)))
+            strength = self.HAND_TYPE_BASE['high_card'] + kicker_score
+        
+        # Кэшируем результат
+        self._hand_strength_cache[cards_key] = strength
+        return strength
+
+    def _check_straight_with_high(self, rank_values: List[int]) -> Tuple[bool, int]:
+        """Проверка стрита с возвратом старшей карты"""
+        unique_values = sorted(set(rank_values))
+        
+        # Проверяем wheel (A-2-3-4-5)
+        if self.WHEEL_RANKS.issubset(set(unique_values)):
+            return True, 5  # В wheel старшая карта = 5
+        
+        # Обычные стриты
+        for i in range(len(unique_values) - 4):
+            if unique_values[i + 4] - unique_values[i] == 4:
+                return True, unique_values[i + 4]
+        
+        return False, 0
+
+    def _get_hand_description(self, cards: List[Card]) -> str:
+        """Получить текстовое описание руки (для совместимости)"""
+        if len(cards) < 2:
+            return "High card"
+        
+        rank_counts = Counter(card.rank for card in cards)
+        suit_counts = Counter(card.suit for card in cards)
+        
+        sorted_counts = sorted(rank_counts.values(), reverse=True)
+        max_rank_count = sorted_counts[0]
+        is_flush = max(suit_counts.values()) >= 5
+        is_straight, _ = self._check_straight_with_high([card.rank_value() for card in cards])
+        
+        if is_straight and is_flush:
+            return "Straight flush"
+        elif max_rank_count >= 4:
+            return "Four of a kind"
+        elif max_rank_count == 3 and len(sorted_counts) > 1 and sorted_counts[1] >= 2:
+            return "Full house"
+        elif is_flush:
+            return "Flush"
+        elif is_straight:
+            return "Straight"
+        elif max_rank_count == 3:
+            return "Three of a kind"
+        elif len(sorted_counts) > 1 and sorted_counts[0] == 2 and sorted_counts[1] == 2:
+            return "Two pair"
+        elif max_rank_count == 2:
+            return "One pair"
+        else:
+            return "High card"
+
+    def _calculate_outs(self, hole_cards: List[Card], board_cards: List[Card]) -> Dict[str, int]:
+        """Точный аналитический расчет аутов без двойного подсчета"""
+        if len(board_cards) >= 5:  # На ривере аутов нет
+            return {'flush': 0, 'straight': 0, 'set_trips': 0, 'overcard': 0}
+        
+        # Создаем колоду оставшихся карт
+        remaining_cards = []
+        used_cards = set((c.rank, c.suit) for c in hole_cards + board_cards)
+        
+        for rank in self.VALID_RANKS:
+            for suit in self.VALID_SUITS:
+                if (rank, suit) not in used_cards:
+                    remaining_cards.append(Card(rank, suit))
+        
+        # Сначала находим ВСЕ ауты каждого типа
+        all_flush_outs = self._count_flush_outs_exclusive(hole_cards, board_cards, remaining_cards)
+        all_straight_outs = self._count_straight_outs_exclusive(hole_cards, board_cards, remaining_cards, all_flush_outs)
+        all_set_outs = self._count_set_trips_outs_exclusive(hole_cards, board_cards, remaining_cards, all_flush_outs | all_straight_outs)
+        all_overcard_outs = self._count_overcard_outs_exclusive(hole_cards, board_cards, remaining_cards, 
+                                                        all_flush_outs | all_straight_outs | all_set_outs)
+        
+        # Применяем приоритеты (флеш > стрит > сет > оверкарта)
+        flush_outs = all_flush_outs
+        straight_outs = all_straight_outs - flush_outs
+        set_outs = all_set_outs - flush_outs - straight_outs  
+        overcard_outs= all_overcard_outs - flush_outs - straight_outs - set_outs
+        
+        return {
+            'flush': len(flush_outs),
+            'straight': len(straight_outs),
+            'set_trips': len(set_outs),
+            'overcard': len(overcard_outs)
+        }
+
+    def _count_flush_outs_exclusive(self, hole_cards: List[Card], board_cards: List[Card], 
+                                remaining_cards: List[Card]) -> set:
+        """Подсчет флеш-аутов, возвращает множество карт"""
+        all_cards = hole_cards + board_cards
+        suit_counts = Counter(card.suit for card in all_cards)
+        flush_outs = set()
+        
+        for suit, count in suit_counts.items():
+            if count == 4:
+                player_suit_count = sum(1 for card in hole_cards if card.suit == suit)
+                if player_suit_count >= 1:
+                    for card in remaining_cards:
+                        if card.suit == suit:
+                            flush_outs.add((card.rank, card.suit))
+        
+        return flush_outs
+
+    def _count_straight_outs_exclusive(self, hole_cards: List[Card], board_cards: List[Card], 
+                                    remaining_cards: List[Card], excluded_outs: set) -> set:
+        """Подсчет стрит-аутов, исключая уже учтенные ауты"""
+        all_cards = hole_cards + board_cards
+        all_ranks = sorted(set(card.rank_value() for card in all_cards))
+        hole_ranks = set(card.rank_value() for card in hole_cards)
+        straight_outs = set()
+        
+        # Обычные стриты
+        for start in range(2, 11):
+            straight_ranks = set(range(start, start + 5))
+            present_ranks = set(all_ranks) & straight_ranks
+            
+            if len(present_ranks) == 4 and hole_ranks & present_ranks:
+                missing_rank = (straight_ranks - set(all_ranks)).pop()
+                for card in remaining_cards:
+                    if (card.rank_value() == missing_rank and 
+                        (card.rank, card.suit) not in excluded_outs):
+                        straight_outs.add((card.rank, card.suit))
+        
+        # Wheel
+        wheel_ranks = {14, 2, 3, 4, 5}
+        present_wheel = set(all_ranks) & wheel_ranks
+        
+        if len(present_wheel) == 4 and hole_ranks & present_wheel:
+            missing_rank = (wheel_ranks - set(all_ranks)).pop()
+            for card in remaining_cards:
+                if (card.rank_value() == missing_rank and 
+                    (card.rank, card.suit) not in excluded_outs):
+                    straight_outs.add((card.rank, card.suit))
+        
+        return straight_outs
+
+    def _count_set_trips_outs_exclusive(self, hole_cards: List[Card], board_cards: List[Card], 
+                                    remaining_cards: List[Card], excluded_outs: set) -> set:
+        """Правильный подсчет сет-аутов"""
+        all_cards = hole_cards + board_cards
+        rank_counts = Counter(card.rank for card in all_cards)
+        hole_ranks = [card.rank for card in hole_cards]
+        set_outs = set()
+        
+        # Трипс → каре и фулл-хауз
+        for rank, count in rank_counts.items():
+            if count == 3 and rank in hole_ranks:
+                # 1. Каре (1 аут)
+                for card in remaining_cards:
+                    if (card.rank == rank and 
+                        (card.rank, card.suit) not in excluded_outs):
+                        set_outs.add((card.rank, card.suit))
+                
+                # 2. Фулл-хауз - ПРАВИЛЬНЫЙ ПОДСЧЕТ
+                for other_rank, other_count in rank_counts.items():
+                    if other_rank != rank and other_count >= 1:
+                        # Вычисляем сколько карт этого ранга осталось в колоде
+                        remaining_of_rank = sum(1 for card in remaining_cards 
+                                            if card.rank == other_rank)
+                        
+                        # Добавляем только доступные карты
+                        count_added = 0
+                        for card in remaining_cards:
+                            if (card.rank == other_rank and 
+                                count_added < remaining_of_rank and
+                                (card.rank, card.suit) not in excluded_outs):
+                                set_outs.add((card.rank, card.suit))
+                                count_added += 1
+        
+        return set_outs
+
+
+    def _count_overcard_outs_exclusive(self, hole_cards: List[Card], board_cards: List[Card], 
+                                    remaining_cards: List[Card], excluded_outs: set) -> set:
+        """Подсчет оверкарт, исключая уже учтенные ауты"""
+        if not board_cards:
+            return set()
+        
+        board_high = max(card.rank_value() for card in board_cards)
+        overcard_outs = set()
+        
+        for hole_card in hole_cards:
+            if hole_card.rank_value() > board_high:
+                for card in remaining_cards:
+                    if (card.rank == hole_card.rank and 
+                        (card.rank, card.suit) not in excluded_outs):
+                        overcard_outs.add((card.rank, card.suit))
+        
+        return overcard_outs
+
+
+======================
+
+detector.py
+import logging
+from pathlib import Path
+from typing import List, Tuple
+import numpy as np
+import cv2
+import torch
+import torch.nn as nn
+import torchvision.transforms as transforms
+from torchvision.models import resnet34
+from ultralytics import YOLO
+from dataclasses import dataclass
+
+import torch.nn.functional as F
+from torchvision import transforms
+from core.data_models import DetectedCard
+
+logger = logging.getLogger(__name__)
+
+class TableCardDetector:
+    """YOLO-based card detection with separate zones for player and board cards"""
+    
+    def __init__(self, weights_path: str, device: str = "cpu"):
+        self.device = device
+        self.weights_path = weights_path
+        logger.info(f"Loading card detector from {weights_path}")
+        
+        if not Path(weights_path).exists():
+            raise FileNotFoundError(f"Model weights not found: {weights_path}")
+        
+        self.model = YOLO(weights_path)
+        self.model.to(device)
+        logger.info("Card detector loaded successfully")
+    
+    def predict(self, frame: np.ndarray, confidence_threshold: float = 0.6) -> List[DetectedCard]:
+        """Detect cards with separate optimization for player and board cards"""
+        if frame is None or frame.size == 0:
+            return []
+        
+        try:
+            results = self.model(frame, verbose=False, conf=confidence_threshold, iou=0.5)
+            all_detections = []
+            
+            frame_height, frame_width = frame.shape[:2]
+            
+            for result in results:
+                if not hasattr(result, 'boxes') or result.boxes is None:
+                    continue
+                
+                for box in result.boxes:
+                    confidence = float(box.conf[0])
+                    if confidence < confidence_threshold:
+                        continue
+                    
+                    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                    cls_id = int(box.cls[0])
+                    
+                    # Базовая валидация bbox
+                    if x2 <= x1 or y2 <= y1:
+                        continue
+                    if (x2 - x1) < 20 or (y2 - y1) < 30:
+                        continue
+                    
+                    # Проверяем границы кадра
+                    if x1 < 0 or y1 < 0 or x2 >= frame_width or y2 >= frame_height:
+                        continue
+                    
+                    kind_raw = self.model.names.get(cls_id, "unknown")
+                    kind = self._map_class_name(kind_raw)
+                    
+                    if kind == "unknown":
+                        continue
+                    
+                    detection = DetectedCard(
+                        bbox=(x1, y1, x2, y2),
+                        kind=kind,
+                        score=confidence
+                    )
+                    all_detections.append(detection)
+            
+            # Применяем оптимизации отдельно для карт игрока и стола
+            optimized_detections = self._optimize_card_detections(all_detections, frame_height, frame_width)
+            
+            logger.info(f"Detected {len(optimized_detections)} cards after optimization")
+            return optimized_detections
+            
+        except Exception as e:
+            logger.error(f"Detection error: {e}")
+            return []
+    
+    def _optimize_card_detections(self, detections: List[DetectedCard], 
+                                frame_height: int, frame_width: int) -> List[DetectedCard]:
+        """Optimize card detections for both player and board cards"""
+        
+        # Разделяем детекции по типам
+        player_cards = [d for d in detections if d.kind == "player"]
+        board_cards = [d for d in detections if d.kind == "board"]
+        
+        # Оптимизируем карты игрока (нижняя часть экрана, максимум 2 карты)
+        optimized_player_cards = self._optimize_player_cards(player_cards, frame_height, frame_width)
+        
+        # Оптимизируем карты стола (центральная часть экрана, максимум 5 карт)
+        optimized_board_cards = self._optimize_board_cards(board_cards, frame_height, frame_width)
+        
+        # Объединяем результат
+        final_detections = optimized_player_cards + optimized_board_cards
+        
+        logger.debug(f"Card optimization: Player {len(player_cards)}->{len(optimized_player_cards)}, Board {len(board_cards)}->{len(optimized_board_cards)}")
+        
+        return final_detections
+    
+    def _optimize_player_cards(self, player_cards: List[DetectedCard], 
+                             frame_height: int, frame_width: int) -> List[DetectedCard]:
+        """Optimize player card detections (bottom area, max 2 cards)"""
+        
+        if not player_cards:
+            return []
+        
+        # Зона поиска карт игрока (нижняя часть)
+        bottom_zone_start = int(frame_height * 0.6)
+        center_zone_left = int(frame_width * 0.2)
+        center_zone_right = int(frame_width * 0.8)
+        
+        filtered_cards = []
+        
+        for card in player_cards:
+            x1, y1, x2, y2 = card.bbox
+            center_x = (x1 + x2) // 2
+            center_y = (y1 + y2) // 2
+            
+            # Проверки для карт игрока
+            in_bottom_zone = center_y >= bottom_zone_start
+            in_center_zone = center_zone_left <= center_x <= center_zone_right
+            not_too_high = center_y >= int(frame_height * 0.4)
+            
+            if in_bottom_zone or (in_center_zone and not_too_high):
+                filtered_cards.append(card)
+        
+        # Ограничиваем до 2 карт с наивысшим confidence
+        if len(filtered_cards) > 2:
+            filtered_cards = sorted(filtered_cards, key=lambda x: x.score, reverse=True)[:2]
+        
+        return filtered_cards
+    
+    def _optimize_board_cards(self, board_cards: List[DetectedCard], 
+                            frame_height: int, frame_width: int) -> List[DetectedCard]:
+        """Optimize board card detections (center area, max 5 cards)"""
+        
+        if not board_cards:
+            return []
+        
+        # Зона поиска карт стола (центральная часть)
+        center_zone_top = int(frame_height * 0.2)
+        center_zone_bottom = int(frame_height * 0.7)
+        center_zone_left = int(frame_width * 0.15)
+        center_zone_right = int(frame_width * 0.85)
+        
+        filtered_cards = []
+        
+        for card in board_cards:
+            x1, y1, x2, y2 = card.bbox
+            center_x = (x1 + x2) // 2
+            center_y = (y1 + y2) // 2
+            
+            # Проверки для карт стола
+            in_vertical_zone = center_zone_top <= center_y <= center_zone_bottom
+            in_horizontal_zone = center_zone_left <= center_x <= center_zone_right
+            
+            if in_vertical_zone and in_horizontal_zone:
+                filtered_cards.append(card)
+        
+        # Ограничиваем до 5 карт и сортируем слева направо
+        if len(filtered_cards) > 5:
+            filtered_cards = sorted(filtered_cards, key=lambda x: x.score, reverse=True)[:5]
+        
+        # Сортируем карты стола слева направо для правильного порядка
+        filtered_cards = sorted(filtered_cards, key=lambda x: (x.bbox[0] + x.bbox[2]) // 2)
+        
+        return filtered_cards
+    
+    def _map_class_name(self, raw_name: str) -> str:
+        """Map YOLO class names to standard format"""
+        name_mapping = {
+            "BoardCard": "board",
+            "PlayerCard": "player", 
+            "board_card": "board",
+            "player_card": "player",
+            "Board": "board",
+            "Player": "player"
+        }
+        return name_mapping.get(raw_name, raw_name.lower())
+
+class CardClassifierResNet:
+    """ResNet-based card classification"""
+    
+    def __init__(self, weights_path: str, device: str = "cpu"):
+        self.device = device
+        self.weights_path = weights_path
+        logger.info(f"Loading card classifier from {weights_path}")
+        
+        if not Path(weights_path).exists():
+            raise FileNotFoundError(f"Model weights not found: {weights_path}")
+        
+        self._load_model()
+        self._setup_transforms()
+        logger.info("Card classifier loaded successfully")
+    
+    def _load_model(self):
+        """Load ResNet model"""
+        checkpoint = torch.load(self.weights_path, map_location=self.device)
+        
+        # Create model architecture
+        try:
+            from torchvision.models import ResNet34_Weights
+            self.model = resnet34(weights=None)
+        except ImportError:
+            self.model = resnet34(pretrained=False)
+        
+        num_features = self.model.fc.in_features
+        self.model.fc = nn.Sequential(
+            nn.Dropout(0.5),
+            nn.Linear(num_features, 52)
+        )
+        
+        # Load weights
+        if isinstance(checkpoint, dict):
+            if 'model_state_dict' in checkpoint:
+                self.model.load_state_dict(checkpoint['model_state_dict'])
+            elif 'state_dict' in checkpoint:
+                self.model.load_state_dict(checkpoint['state_dict'])
+            else:
+                self.model.load_state_dict(checkpoint)
+        else:
+            self.model = checkpoint
+        
+        self.model.to(self.device)
+        self.model.eval()
+        
+        # Class names
+        self.class_names = [
+            "ace of clubs", "ace of diamonds", "ace of hearts", "ace of spades",
+            "eight of clubs", "eight of diamonds", "eight of hearts", "eight of spades",
+            "five of clubs", "five of diamonds", "five of hearts", "five of spades",
+            "four of clubs", "four of diamonds", "four of hearts", "four of spades",
+            "jack of clubs", "jack of diamonds", "jack of hearts", "jack of spades",
+            "king of clubs", "king of diamonds", "king of hearts", "king of spades",
+            "nine of clubs", "nine of diamonds", "nine of hearts", "nine of spades",
+            "queen of clubs", "queen of diamonds", "queen of hearts", "queen of spades",
+            "seven of clubs", "seven of diamonds", "seven of hearts", "seven of spades",
+            "six of clubs", "six of diamonds", "six of hearts", "six of spades",
+            "ten of clubs", "ten of diamonds", "ten of hearts", "ten of spades",
+            "three of clubs", "three of diamonds", "three of hearts", "three of spades",
+            "two of clubs", "two of diamonds", "two of hearts", "two of spades"
+        ]
+    
+    def _setup_transforms(self):
+        """Setup preprocessing transforms"""
+        self.transform = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+    
+    def classify_crop(self, crop: np.ndarray) -> Tuple[str, float]:
+        """Classify single card crop"""
+        if crop is None or crop.size == 0:
+            return "unknown", 0.0
+        
+        try:
+            # Preprocess
+            crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+            tensor = self.transform(crop_rgb).unsqueeze(0).to(self.device)
+            
+            # Inference
+            with torch.no_grad():
+                output = self.model(tensor)
+                probs = F.softmax(output, dim=1)
+                confidence, index = torch.max(probs, dim=1)
+            
+            # Map to card name
+            class_idx = index.item()
+            confidence_score = confidence.item()
+            
+            if 0 <= class_idx < len(self.class_names):
+                raw_label = self.class_names[class_idx]
+                card_label = self._map_class_to_card(raw_label)
+                return card_label, confidence_score
+            
+            return "unknown", confidence_score
+            
+        except Exception as e:
+            logger.error(f"Classification error: {e}")
+            return "unknown", 0.0
+    
+    def _map_class_to_card(self, raw_label: str) -> str:
+        """Map class name to card notation"""
+        name_mapping = {
+            "ace of clubs": "Ac", "ace of diamonds": "Ad", "ace of hearts": "Ah", "ace of spades": "As",
+            "king of clubs": "Kc", "king of diamonds": "Kd", "king of hearts": "Kh", "king of spades": "Ks",
+            "queen of clubs": "Qc", "queen of diamonds": "Qd", "queen of hearts": "Qh", "queen of spades": "Qs",
+            "jack of clubs": "Jc", "jack of diamonds": "Jd", "jack of hearts": "Jh", "jack of spades": "Js",
+            "ten of clubs": "Tc", "ten of diamonds": "Td", "ten of hearts": "Th", "ten of spades": "Ts",
+            "nine of clubs": "9c", "nine of diamonds": "9d", "nine of hearts": "9h", "nine of spades": "9s",
+            "eight of clubs": "8c", "eight of diamonds": "8d", "eight of hearts": "8h", "eight of spades": "8s",
+            "seven of clubs": "7c", "seven of diamonds": "7d", "seven of hearts": "7h", "seven of spades": "7s",
+            "six of clubs": "6c", "six of diamonds": "6d", "six of hearts": "6h", "six of spades": "6s",
+            "five of clubs": "5c", "five of diamonds": "5d", "five of hearts": "5h", "five of spades": "5s",
+            "four of clubs": "4c", "four of diamonds": "4d", "four of hearts": "4h", "four of spades": "4s",
+            "three of clubs": "3c", "three of diamonds": "3d", "three of hearts": "3h", "three of spades": "3s",
+            "two of clubs": "2c", "two of diamonds": "2d", "two of hearts": "2h", "two of spades": "2s"
+        }
+        
+        return name_mapping.get(raw_label.lower(), raw_label)
+
+=======================
+widgets.py
+from PySide6.QtCore import Qt, QPoint, QRect
+from PySide6.QtGui import QGuiApplication, QPainter, QPen, QBrush, QColor
+from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QLineEdit, QDialog
+from typing import Optional
+
+class CardLineEdit(QLineEdit):
+    """Enhanced QLineEdit with wheel scrolling for card ranks"""
+    
+    ranks = ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A']
+    
+    def wheelEvent(self, event):
+        """Handle mouse wheel to cycle through card ranks"""
+        text = self.text().upper()
+        suit = ''
+        rank = 'A'  # Default rank
+        
+        # Parse current text
+        if len(text) == 2:
+            rank, suit = text[0], text[1]
+        elif len(text) == 1:
+            rank = text[0]
+        
+        # Find current rank index
+        try:
+            current_idx = self.ranks.index(rank)
+        except ValueError:
+            current_idx = len(self.ranks) - 1  # Default to 'A' if invalid rank
+        
+        # Calculate new rank based on scroll direction
+        scroll_delta = event.angleDelta().y()
+        if scroll_delta > 0:  # Scroll up - next rank
+            new_idx = (current_idx + 1) % len(self.ranks)
+        else:  # Scroll down - previous rank
+            new_idx = (current_idx - 1) % len(self.ranks)
+        
+        new_rank = self.ranks[new_idx]
+        new_text = new_rank + suit
+        
+        # Update text and select all
+        self.setText(new_text)
+        self.selectAll()
+        
+        # Accept the event to prevent parent widget scrolling
+        event.accept()
+
+class CardInputWidget(QWidget):
+    """Universal card input widget with suit buttons and wheel scrolling"""
+    
+    def __init__(self, label_text: str, parent=None):
+        super().__init__(parent)
+        self.layout = QHBoxLayout(self)
+        self.layout.setContentsMargins(5, 5, 5, 5)
+        self.layout.setSpacing(8)
+        
+        # Label
+        self.label = QLabel(label_text)
+        self.label.setFixedWidth(80)
+        self.label.setStyleSheet("color: #fff; font-weight: bold;")
+        self.layout.addWidget(self.label)
+        
+        # Enhanced card input field with wheel scrolling
+        self.line_edit = CardLineEdit()
+        self.line_edit.setFixedWidth(50)
+        self.line_edit.setMaxLength(2)
+        self.line_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.line_edit.setStyleSheet("""
+            QLineEdit {
+                font-weight: bold; 
+                font-size: 18px; 
+                text-transform: uppercase;
+                padding: 8px;
+                border: 2px solid #555;
+                border-radius: 6px;
+                background-color: #1a1a1a;
+                color: white;
+            }
+            QLineEdit:focus {
+                border-color: #4CAF50;
+                background-color: #222;
+            }
+            QLineEdit:hover {
+                border-color: #777;
+                background-color: #222;
+            }
+        """)
+        
+        self.line_edit.setToolTip("🎮 Scroll wheel to change rank\n🖱️ Click suit buttons to change suit")
+        self.layout.addWidget(self.line_edit)
+        
+        # Suit selection buttons
+        self.suit_buttons = []
+        suits = [
+            ("s", "♠", "#1a1a1a", "#f0f0f0", "Spades"),
+            ("h", "♥", "#e53935", "#fff0f0", "Hearts"),
+            ("c", "♣", "#1a1a1a", "#f0f0f0", "Clubs"),
+            ("d", "♦", "#e53935", "#fff0f0", "Diamonds")
+        ]
+
+        for suit_char, suit_symbol, text_color, bg_color, tooltip in suits:
+            btn = QPushButton(suit_symbol)
+            btn.setFixedSize(36, 36)
+            btn.setToolTip(f"{tooltip}\nClick to set suit")
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    font-size: 22px; 
+                    font-weight: bold; 
+                    color: {text_color}; 
+                    background-color: {bg_color}; 
+                    border: 2px solid #999;
+                    border-radius: 8px;
+                    margin-left: 3px;
+                    padding: 2px;
+                }}
+                QPushButton:hover {{
+                    background-color: #4CAF50;
+                    color: white;
+                    border-color: #4CAF50;
+                }}
+                QPushButton:pressed {{
+                    background-color: #388E3C;
+                    color: white;
+                    border-color: #388E3C;
+                }}
+            """)
+            btn.clicked.connect(lambda checked, s=suit_char: self.on_suit_clicked(s))
+            self.layout.addWidget(btn)
+            self.suit_buttons.append(btn)
+
+    
+    def on_suit_clicked(self, suit_char: str):
+        """Handle suit button click"""
+        text = self.line_edit.text().upper()
+        if len(text) == 0:
+            rank = 'A'  # Default rank
+        else:
+            rank = text[0]
+        
+        new_text = rank + suit_char.upper()
+        self.line_edit.setText(new_text)
+        self.line_edit.setFocus()
+        self.line_edit.selectAll()
+    
+    def get_text(self) -> str:
+        """Get current card text"""
+        return self.line_edit.text().upper()
+    
+    def set_text(self, text: str):
+        """Set card text"""
+        self.line_edit.setText(text.upper())
+    
+    def clear(self):
+        """Clear the input field"""
+        self.line_edit.clear()
+
+class SelectionOverlay(QDialog):
+    """Transparent overlay for ROI selection"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint | 
+                          Qt.WindowType.FramelessWindowHint | 
+                          Qt.WindowType.Tool)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setWindowModality(Qt.WindowModality.ApplicationModal)
+        
+        self.start_point: Optional[QPoint] = None
+        self.end_point: Optional[QPoint] = None
+        
+        # Cover entire screen
+        screen_geometry = QGuiApplication.primaryScreen().geometry()
+        self.setGeometry(screen_geometry)
+        self.setCursor(Qt.CursorShape.CrossCursor)
+    
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.start_point = event.globalPosition().toPoint()
+            self.end_point = self.start_point
+            self.update()
+    
+    def mouseMoveEvent(self, event):
+        if self.start_point is not None:
+            self.end_point = event.globalPosition().toPoint()
+            self.update()
+    
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.start_point is not None:
+            self.end_point = event.globalPosition().toPoint()
+            self.accept()
+    
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.reject()
+    
+    def paintEvent(self, event):
+        if not self.start_point or not self.end_point:
+            return
+        
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        rect = QRect(self.start_point, self.end_point).normalized()
+        
+        # Green selection rectangle
+        painter.setPen(QPen(QColor(0, 255, 0), 3, Qt.PenStyle.SolidLine))
+        painter.drawRect(rect)
+        painter.fillRect(rect, QColor(0, 255, 0, 30))
+        
+        # Coordinates text
+        painter.setPen(QPen(QColor(255, 255, 255), 2))
+        painter.setBrush(QBrush(QColor(0, 0, 0, 150)))
+        text = f"{rect.x()}, {rect.y()} ({rect.width()}×{rect.height()})"
+        text_rect = painter.fontMetrics().boundingRect(text)
+        text_rect.adjust(-5, -3, 5, 3)
+        text_pos = rect.topLeft() + QPoint(0, -10)
+        text_rect.moveTo(text_pos)
+        painter.drawRect(text_rect)
+        painter.setPen(QPen(QColor(255, 255, 255)))
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, text)
+    
+    def selected_rect(self) -> Optional[QRect]:
+        if self.start_point and self.end_point:
+            return QRect(self.start_point, self.end_point).normalized()
+        return None
+
+=======================
+screen_capture.py
+
+import platform
+import tempfile
+import subprocess
+import os
+import logging
+import cv2
+import numpy as np
+from typing import Optional
+from PySide6.QtCore import QRect
+import pyautogui
+
+logger = logging.getLogger(__name__)
+
+class ScreenCapture:
+    """Cross-platform screen capture with DPI awareness"""
+    
+    def __init__(self):
+        self._setup_dpi_awareness()
+    
+    def _setup_dpi_awareness(self):
+        """Setup DPI awareness for Windows"""
+        if platform.system().lower() == "windows":
+            try:
+                import ctypes
+                from ctypes import wintypes
+                # Установить DPI awareness для корректного захвата координат
+                ctypes.windll.user32.SetProcessDPIAware()
+                logger.info("Windows DPI awareness enabled")
+            except Exception as e:
+                logger.warning(f"Failed to set DPI awareness: {e}")
+    
+    def grab_roi(self, roi: QRect) -> Optional[np.ndarray]:
+        """Capture screen region - cross-platform"""
+        system = platform.system().lower()
+        
+        if system == "windows":
+            return self._capture_windows(roi)
+        elif system == "linux":
+            return self._capture_linux(roi)
+        elif system == "darwin":  # macOS
+            return self._capture_macos(roi)
+        else:
+            logger.error(f"Unsupported platform: {system}")
+            return None
+    
+    def _capture_windows(self, roi: QRect) -> Optional[np.ndarray]:
+        """Windows screen capture using multiple methods"""
+        # Метод 1: PIL ImageGrab с DPI корректировкой
+        try:
+            from PIL import ImageGrab
+            import ctypes
+            
+            # Получить DPI scaling factor
+            user32 = ctypes.windll.user32
+            screensize = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+            
+            # Захватить область
+            bbox = (roi.x(), roi.y(), roi.x() + roi.width(), roi.y() + roi.height())
+            screenshot = ImageGrab.grab(bbox=bbox, all_screens=False)
+            
+            if screenshot:
+                # Конвертировать PIL в OpenCV формат
+                frame = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+                logger.debug(f"Windows PIL capture successful: {frame.shape}")
+                return frame
+            else:
+                logger.warning("PIL ImageGrab returned empty image")
+                return self._capture_windows_mss(roi)
+                
+        except ImportError:
+            logger.warning("PIL not available, trying MSS")
+            return self._capture_windows_mss(roi)
+        except Exception as e:
+            logger.error(f"PIL capture error: {e}")
+            return self._capture_windows_mss(roi)
+    
+    def _capture_windows_mss(self, roi: QRect) -> Optional[np.ndarray]:
+        """Windows MSS screen capture (более точный для DPI)"""
+        try:
+            import mss
+            
+            with mss.mss() as sct:
+                # MSS использует словарь для координат
+                monitor = {
+                    "top": roi.y(),
+                    "left": roi.x(), 
+                    "width": roi.width(),
+                    "height": roi.height()
+                }
+                
+                # Захватить область
+                screenshot = sct.grab(monitor)
+                
+                # Конвертировать MSS в numpy array
+                frame = np.array(screenshot)
+                # MSS возвращает BGRA, конвертируем в BGR
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                
+                logger.debug(f"Windows MSS capture successful: {frame.shape}")
+                return frame
+                
+        except ImportError:
+            logger.warning("MSS not available, trying PyAutoGUI")
+            return self._capture_windows_pyautogui(roi)
+        except Exception as e:
+            logger.error(f"MSS capture error: {e}")
+            return self._capture_windows_pyautogui(roi)
+    
+    def _capture_windows_pyautogui(self, roi: QRect) -> Optional[np.ndarray]:
+        """Windows PyAutoGUI screen capture (fallback)"""
+        try:
+            import pyautogui
+            
+            # PyAutoGUI регион захвата
+            screenshot = pyautogui.screenshot(region=(roi.x(), roi.y(), roi.width(), roi.height()))
+            
+            # Конвертировать PIL в OpenCV
+            frame = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+            logger.debug(f"Windows PyAutoGUI capture successful: {frame.shape}")
+            return frame
+            
+        except ImportError:
+            logger.error("PyAutoGUI not available, using PowerShell fallback")
+            return self._capture_windows_fallback(roi)
+        except Exception as e:
+            logger.error(f"PyAutoGUI capture error: {e}")
+            return self._capture_windows_fallback(roi)
+    
+    def _capture_windows_fallback(self, roi: QRect) -> Optional[np.ndarray]:
+        """Windows fallback using PowerShell"""
+        tmppath = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmpfile:
+                tmppath = tmpfile.name
+            
+            # PowerShell script с DPI awareness
+            ps_cmd = f'''
+            Add-Type -AssemblyName System.Windows.Forms
+            Add-Type -AssemblyName System.Drawing
+            
+            # Enable DPI awareness
+            [System.Windows.Forms.Application]::SetHighDpiMode("SystemAware")
+            
+            $bounds = [System.Drawing.Rectangle]::new({roi.x()}, {roi.y()}, {roi.width()}, {roi.height()})
+            $bmp = New-Object System.Drawing.Bitmap $bounds.width, $bounds.height
+            $graphics = [System.Drawing.Graphics]::FromImage($bmp)
+            $graphics.CopyFromScreen($bounds.X, $bounds.Y, 0, 0, $bounds.size)
+            $bmp.Save("{tmppath.replace(chr(92), chr(92) + chr(92))}")
+            $graphics.Dispose()
+            $bmp.Dispose()
+            '''
+            
+            result = subprocess.run(['powershell', '-Command', ps_cmd], 
+                                   capture_output=True, text=True, timeout=15)
+            
+            if result.returncode == 0 and os.path.exists(tmppath):
+                frame = cv2.imread(tmppath)
+                if frame is not None:
+                    logger.debug(f"Windows PowerShell capture successful: {frame.shape}")
+                    return frame
+                else:
+                    logger.error("PowerShell created file but OpenCV cannot read it")
+            else:
+                logger.error(f"PowerShell capture failed: {result.stderr}")
+                
+        except Exception as e:
+            logger.error(f"Windows PowerShell capture error: {e}")
+        finally:
+            if tmppath and os.path.exists(tmppath):
+                try:
+                    os.unlink(tmppath)
+                except:
+                    pass
+        return None
+    
+    def _capture_linux(self, roi: QRect) -> Optional[np.ndarray]:
+        """Linux screen capture using ImageMagick"""
+        tmppath = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmpfile:
+                tmppath = tmpfile.name
+            
+            cmd = ["import", "-window", "root", "-crop", 
+                   f"{roi.width()}x{roi.height()}+{roi.x()}+{roi.y()}", tmppath]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            
+            if result.returncode == 0 and os.path.exists(tmppath):
+                frame = cv2.imread(tmppath)
+                if frame is not None:
+                    logger.debug(f"Linux capture successful: {frame.shape}")
+                    return frame
+            else:
+                logger.warning(f"ImageMagick capture failed: {result.stderr}")
+                
+        except Exception as e:
+            logger.error(f"Linux capture error: {e}")
+        finally:
+            if tmppath and os.path.exists(tmppath):
+                try:
+                    os.unlink(tmppath)
+                except:
+                    pass
+        return None
+    
+    def _capture_macos(self, roi: QRect) -> Optional[np.ndarray]:
+        """macOS screen capture"""
+        tmppath = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmpfile:
+                tmppath = tmpfile.name
+            
+            # macOS screencapture utility
+            cmd = ["screencapture", "-R", f"{roi.x()},{roi.y()},{roi.width()},{roi.height()}", tmppath]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            
+            if result.returncode == 0 and os.path.exists(tmppath):
+                frame = cv2.imread(tmppath)
+                if frame is not None:
+                    logger.debug(f"macOS capture successful: {frame.shape}")
+                    return frame
+            else:
+                logger.warning(f"macOS capture failed: {result.stderr}")
+                
+        except Exception as e:
+            logger.error(f"macOS capture error: {e}")
+        finally:
+            if tmppath and os.path.exists(tmppath):
+                try:
+                    os.unlink(tmppath)
+                except:
+                    pass
+        return None
+
+
+====================
+
+app_window.py
+import json
+import logging
+from pathlib import Path
+from typing import List, Dict, Optional
+
+import numpy as np
+import cv2
+from PySide6.QtWidgets import *
+from PySide6.QtCore import *
+from PySide6.QtGui import *
+
+from core.constants import *
+from core.data_models import *
+from core.hand_analyzer import HandAnalyzer
+from core.gto_engine import OpenChartEngine
+from ml.detector import TableCardDetector, CardClassifierResNet
+from ui.widgets import CardInputWidget, SelectionOverlay
+from utils.screen_capture import ScreenCapture
+
+logger = logging.getLogger(__name__)
+
+class PokerMLLiteGUI(QWidget):
+    """Enhanced Poker GUI with extended functionality"""
+    
+    
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("💜 PoRTA 💜")
+    
+        # Устанавливаем разумный стартовый размер и делаем окно изменяемым
+        self.setGeometry(100, 100, 1000, 700)
+        self.setMinimumSize(800, 600)  # Минимальный размер
+        self.resize(1000, 700)  # Стартовый размер
+    
+        # Разрешаем изменение размера окна
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        
+        # Core components
+        self.chart_engine = OpenChartEngine()
+        self.screen_capture = ScreenCapture()
+        self.detector = None
+        self.classifier = None
+        self.hand_analyzer = HandAnalyzer()
+        
+        # State
+        self.roi = None
+        self.captured_frame = None
+        self.current_game_state = GameState(
+            table_size=TableSize.SIX_MAX,
+            game_type=GameType.CASH,
+            stage=GameStage.PREFLOP,
+            player_cards=[],
+            board_cards=[]
+        )
+        
+        # Initialize models if weights exist
+        self.initialize_models()
+        
+        self.setup_ui()
+        self.load_roi()
+
+        self.analysis_timer = QTimer(self)
+        self.analysis_timer.setSingleShot(True)
+        self.analysis_timer.timeout.connect(self.analyze_situation)
+
+    def get_opponents_count(self, table_size: TableSize) -> int:
+        """Конвертировать размер стола в количество оппонентов"""
+        opponents_map = {
+            TableSize.HEADS_UP: 1,    # 2 игрока = 1 оппонент
+            TableSize.THREE_MAX: 2,   # 3 игрока = 2 оппонента
+            TableSize.FOUR_MAX: 3,    # 4 игрока = 3 оппонента
+            TableSize.FIVE_MAX: 4,    # 5 игроков = 4 оппонента
+            TableSize.SIX_MAX: 5,     # 6 игроков = 5 оппонентов
+            TableSize.SEVEN_MAX: 6,   # 7 игроков = 6 оппонентов
+            TableSize.EIGHT_MAX: 7,   # 8 игроков = 7 оппонентов
+            TableSize.NINE_MAX: 8     # 9 игроков = 8 оппонентов
+        }
+        return opponents_map.get(table_size, 1)
+
+    def get_players_count(self, table_size: TableSize) -> int:
+        """Получить общее количество игроков за столом"""
+        return self.get_opponents_count(table_size) + 1  # +1 за самого игрока
+    
+    def initialize_models(self):
+        """Initialize ML models if weights are available"""
+        try:
+            script_dir = Path(__file__).parent
+            yolo_path = script_dir / "models" / "board_player_detector_v4.pt"
+            resnet_path = script_dir / "models" / "fine_tuned_resnet_cards_240EPOCH.pt"
+            
+            if Path(yolo_path).exists() and Path(resnet_path).exists():
+                self.detector = TableCardDetector(yolo_path, "cpu")
+                self.classifier = CardClassifierResNet(resnet_path, "cpu")
+                logger.info("ML models initialized successfully")
+            else:
+                print()
+                print()
+                logger.warning("Model weights not found - ML features disabled")
+                print()
+                print()
+                
+        except Exception as e:
+            logger.error(f"Failed to initialize models: {e}")
+    
+    def setup_ui(self):
+        """Setup the enhanced user interface with horizontal layout"""
+        main_layout = QVBoxLayout(self)
+        
+        # Title
+        title = QLabel("PoRTA 2 - Advanced Poker Analysis")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("font-size: 24px; font-weight: bold; color: #4CAF50; padding: 15px;")
+        
+        # Screenshot capture controls (компактные, горизонтально)
+        capture_layout = QHBoxLayout()
+        self.select_roi_btn = QPushButton("🎯 Select Area")
+        self.take_picture_btn = QPushButton("📸 Analyze Table")
+        self.analyze_btn = QPushButton("🧠 Analyze")
+        self.take_picture_btn.setEnabled(False)
+        
+        for btn in [self.select_roi_btn, self.take_picture_btn, self.analyze_btn]:
+            btn.setStyleSheet("padding: 8px 15px; font-weight: bold; font-size: 12px;")
+        self.select_roi_btn.setStyleSheet(self.select_roi_btn.styleSheet() + "background-color: #FF9800;")
+        self.take_picture_btn.setStyleSheet(self.take_picture_btn.styleSheet() + "background-color: #2196F3;")
+        self.analyze_btn.setStyleSheet(self.analyze_btn.styleSheet() + "background-color: #4CAF50;")
+        
+        self.select_roi_btn.clicked.connect(self.select_roi)
+        self.take_picture_btn.clicked.connect(self.take_picture)
+        self.analyze_btn.clicked.connect(self.analyze_situation)
+        
+        capture_layout.addWidget(self.select_roi_btn)
+        capture_layout.addWidget(self.take_picture_btn)
+        capture_layout.addWidget(self.analyze_btn)
+        capture_layout.addStretch()
+        
+        # Game state display
+        self.game_state_label = QLabel("Current Mode: 6-Max Cash | Stage: Preflop")
+        self.game_state_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #81C784; padding: 8px;")
+        
+        # === MAIN HORIZONTAL LAYOUT (4 columns) ===
+        main_horizontal = QHBoxLayout()
+        main_horizontal.setSpacing(15)
+        
+        # === COLUMN 1: Table Configuration ===
+        table_config_frame = QGroupBox("Table Configuration")
+        table_config_frame.setFixedWidth(180)
+        table_config_frame.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                font-size: 12px;
+                border: 2px solid #555;
+                border-radius: 8px;
+                margin-top: 1ex;
+                padding-top: 8px;
+                background-color: #2a2a2a;
+            }
+        """)
+        table_config_layout = QVBoxLayout(table_config_frame)
+        table_config_layout.setSpacing(4)
+        
+        # Table size buttons (компактные)
+        self.table_size_group = QButtonGroup()
+        table_sizes = [
+        ("2_players", "2 игрока", TableSize.HEADS_UP, GameType.CASH),
+        ("3_players", "3 игрока", TableSize.THREE_MAX, GameType.CASH),  # Новый
+        ("4_players", "4 игрока", TableSize.FOUR_MAX, GameType.CASH),
+        ("5_players", "5 игроков", TableSize.FIVE_MAX, GameType.CASH),   # Новый
+        ("6_players", "6 игроков", TableSize.SIX_MAX, GameType.CASH),
+        ("7_players", "7 игроков", TableSize.SEVEN_MAX, GameType.CASH),  # Новый
+        ("8_players", "8 игроков", TableSize.EIGHT_MAX, GameType.CASH),  # Новый
+        ("9_players", "9 игроков", TableSize.NINE_MAX, GameType.CASH)
+        ]
+        
+        self.table_buttons = {}
+        for btn_id, label, size, game_type in table_sizes:
+            btn = QRadioButton(label)
+            btn.setProperty("table_size", size)
+            btn.setProperty("game_type", game_type)
+            btn.setStyleSheet("font-size: 11px; padding: 2px;")
+            
+            if btn_id == "6max_cash":  # Default
+                btn.setChecked(True)
+            
+            self.table_size_group.addButton(btn)
+            self.table_buttons[btn_id] = btn
+            table_config_layout.addWidget(btn)
+        
+        table_config_layout.addStretch()
+        self.table_size_group.buttonClicked.connect(self.on_table_config_changed)
+        
+        # === COLUMN 2: Cards Column ===
+        cards_column = QVBoxLayout()
+        cards_column.setSpacing(10)
+        
+        # Player Cards
+        player_cards_frame = QGroupBox("Player Cards")
+        player_cards_frame.setFixedWidth(280)
+        player_cards_frame.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                font-size: 12px;
+                border: 2px solid #555;
+                border-radius: 8px;
+                margin-top: 1ex;
+                padding-top: 8px;
+                background-color: #2a2a2a;
+            }
+        """)
+        player_cards_layout = QVBoxLayout(player_cards_frame)
+        player_cards_layout.setSpacing(8)
+        
+        self.card1_widget = CardInputWidget("Card 1:")
+        self.card2_widget = CardInputWidget("Card 2:")
+        
+        # Настраиваем размеры
+        for widget in [self.card1_widget, self.card2_widget]:
+            widget.label.setFixedWidth(70)
+            widget.line_edit.setFixedWidth(45)
+            for btn in widget.suit_buttons:
+                btn.setFixedSize(30, 30)
+        
+        player_cards_layout.addWidget(self.card1_widget)
+        player_cards_layout.addWidget(self.card2_widget)
+        
+        # Board Cards
+        board_cards_frame = QGroupBox("Board Cards")
+        board_cards_frame.setFixedWidth(280)
+        board_cards_frame.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                font-size: 12px;
+                border: 2px solid #555;
+                border-radius: 8px;
+                margin-top: 1ex;
+                padding-top: 8px;
+                background-color: #2a2a2a;
+            }
+        """)
+        board_cards_layout = QVBoxLayout(board_cards_frame)
+        board_cards_layout.setSpacing(6)
+        
+        self.flop1_widget = CardInputWidget("Flop 1:")
+        self.flop2_widget = CardInputWidget("Flop 2:")
+        self.flop3_widget = CardInputWidget("Flop 3:")
+        self.turn_widget = CardInputWidget("Turn:")
+        self.river_widget = CardInputWidget("River:")
+        
+        # Настраиваем размеры для board cards
+        for widget in [self.flop1_widget, self.flop2_widget, self.flop3_widget,
+                    self.turn_widget, self.river_widget]:
+            widget.label.setFixedWidth(70)
+            widget.line_edit.setFixedWidth(45)
+            for btn in widget.suit_buttons:
+                btn.setFixedSize(30, 30)
+        
+        board_cards_layout.addWidget(self.flop1_widget)
+        board_cards_layout.addWidget(self.flop2_widget)
+        board_cards_layout.addWidget(self.flop3_widget)
+        board_cards_layout.addWidget(self.turn_widget)
+        board_cards_layout.addWidget(self.river_widget)
+        
+        # Собираем cards column
+        cards_column.addWidget(player_cards_frame)
+        cards_column.addWidget(board_cards_frame)
+        cards_column.addStretch()
+        
+        # === COLUMN 3: Poker Analysis ===
+        analysis_frame = QGroupBox("Poker Analysis")
+        analysis_frame.setMinimumWidth(350)
+        analysis_frame.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                font-size: 14px;
+                border: 2px solid #555;
+                border-radius: 8px;
+                margin-top: 1ex;
+                padding-top: 10px;
+                background-color: #1e1e1e;
+            }
+        """)
+        
+        analysis_layout_frame = QVBoxLayout(analysis_frame)
+        
+        # Analysis scroll area
+        self.analysis_scroll = QScrollArea()
+        self.analysis_content = QWidget()
+        self.analysis_layout = QVBoxLayout(self.analysis_content)
+        
+        self.analysis_scroll.setWidget(self.analysis_content)
+        self.analysis_scroll.setWidgetResizable(True)
+        self.analysis_scroll.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background-color: #1a1a1a;
+            }
+            QScrollBar:vertical {
+                background: #2a2a2a;
+                width: 12px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background: #555;
+                border-radius: 6px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #666;
+            }
+        """)
+        
+        analysis_layout_frame.addWidget(self.analysis_scroll, 1)
+        
+        # Initial analysis placeholder
+        self.create_default_analysis()
+        
+        # === COLUMN 4: Captured Image ===
+        image_frame = QGroupBox("Captured Image")
+        image_frame.setMinimumWidth(300)
+        image_frame.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                font-size: 12px;
+                border: 2px solid #555;
+                border-radius: 8px;
+                margin-top: 1ex;
+                padding-top: 8px;
+                background-color: #2a2a2a;
+            }
+        """)
+        
+        image_layout_frame = QVBoxLayout(image_frame)
+        
+        # Image display
+        self.image_label = QLabel("Select area and analyze\ntable to detect cards\nautomatically")
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_label.setMinimumSize(280, 300)
+        self.image_label.setStyleSheet("""
+            background: #111; 
+            color: #ccc; 
+            border: 2px solid #444; 
+            border-radius: 4px; 
+            font-size: 14px;
+            padding: 15px;
+            line-height: 1.4;
+        """)
+        
+        image_layout_frame.addWidget(self.image_label, 1)
+        
+        # === ASSEMBLE HORIZONTAL LAYOUT ===
+        main_horizontal.addWidget(table_config_frame)  # Column 1
+        main_horizontal.addLayout(cards_column)        # Column 2
+        main_horizontal.addWidget(analysis_frame, 1)   # Column 3 (расширяемая)
+        main_horizontal.addWidget(image_frame)         # Column 4
+        
+        # Status
+        self.status_label = QLabel("Ready - Configure table and cards for analysis")
+        self.status_label.setStyleSheet("color: #888; padding: 8px; background-color: #222; border-radius: 4px;")
+        
+        # === MAIN LAYOUT ASSEMBLY ===
+        main_layout.addWidget(title)
+        main_layout.addLayout(capture_layout)
+        main_layout.addWidget(self.game_state_label)
+        main_layout.addLayout(main_horizontal, 1)  # Main content
+        main_layout.addWidget(self.status_label)
+        
+        # Connect card input signals
+        for widget in [self.card1_widget, self.card2_widget, 
+                    self.flop1_widget, self.flop2_widget, self.flop3_widget,
+                    self.turn_widget, self.river_widget]:
+            widget.line_edit.textChanged.connect(self.on_cards_changed)
+
+    
+    def create_default_analysis(self):
+        """Create default analysis display"""
+        # Безопасная очистка existing layout
+        while self.analysis_layout.count():
+            child = self.analysis_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+        
+        welcome_label = QLabel("🃏 Welcome to PoRTA 2")
+        welcome_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #4CAF50; padding: 15px;")
+        welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        instructions = QLabel("""
+        <b>Instructions:</b><br>
+        1. Select table configuration (size and game type)<br>
+        2. Enter player cards and board cards manually<br>
+        3. OR use ML detection by selecting capture area<br>
+        4. Click 'Full Analysis' for comprehensive poker analysis<br><br>
+        
+        <b>Analysis Features:</b><br>
+        • Preflop GTO opening recommendations<br>
+        • Postflop hand strength evaluation<br>
+        • Board texture analysis<br>
+        • Equity and outs calculations<br>
+        • Stage-specific strategy advice
+        """)
+        instructions.setStyleSheet("color: #ccc; padding: 20px; line-height: 1.6;")
+        instructions.setWordWrap(True)
+        
+        self.analysis_layout.addWidget(welcome_label)
+        self.analysis_layout.addWidget(instructions)
+        self.analysis_layout.addStretch()
+    
+    def on_table_config_changed(self):
+        """Handle table configuration change"""
+        checked_btn = self.table_size_group.checkedButton()
+        if checked_btn:
+            table_size = checked_btn.property("table_size")
+            game_type = checked_btn.property("game_type")
+            
+            self.current_game_state.table_size = table_size
+            self.current_game_state.game_type = game_type
+            
+            self.update_game_state_display()
+            
+            # Re-analyze if cards are present
+            if self.has_player_cards():
+                self.analyze_situation()
+    
+    def on_cards_changed(self):
+        """Handle card input changes"""
+        # Update game state based on board cards
+        board_cards = self.get_board_cards()
+        self.current_game_state.board_cards = board_cards
+        self.current_game_state.stage = self.hand_analyzer.determine_game_stage(board_cards)
+        
+        self.update_game_state_display()
+        
+        # Auto-analyze if we have player cards
+        if self.has_player_cards():
+            if hasattr(self, 'analysis_timer'):
+                self.analysis_timer.stop()
+                self.analysis_timer.start(300)  # 300мс задержка
+            else:
+                self.analyze_situation()  # Fallback если таймер не создан
+    
+    def update_game_state_display(self):
+        """Update the game state display label"""
+        players_count = self.get_players_count(self.current_game_state.table_size)
+        stage_name = self.current_game_state.stage.value
+        board_count = len(self.current_game_state.board_cards)
+        
+        display_text = f"Стол: {players_count} игроков | Стадия: {stage_name} ({board_count} карт на борде)"
+        self.game_state_label.setText(display_text)
+    
+    def has_player_cards(self) -> bool:
+        """Check if both player cards are entered"""
+        card1 = self.card1_widget.get_text().strip()
+        card2 = self.card2_widget.get_text().strip()
+        return bool(card1 and card2)
+    
+    def get_player_cards(self) -> List[Card]:
+        """Get parsed player cards"""
+        cards = []
+        for widget in [self.card1_widget, self.card2_widget]:
+            text = widget.get_text().strip()
+            if text:
+                card = self.hand_analyzer.parse_card_string(text)
+                if card:
+                    cards.append(card)
+        return cards
+    
+    def get_board_cards(self) -> List[Card]:
+        """Get parsed board cards"""
+        cards = []
+        for widget in [self.flop1_widget, self.flop2_widget, self.flop3_widget, 
+                      self.turn_widget, self.river_widget]:
+            text = widget.get_text().strip()
+            if text:
+                card = self.hand_analyzer.parse_card_string(text)
+                if card:
+                    cards.append(card)
+        return cards
+    
+    def select_roi(self):
+        """Select capture region using overlay"""
+        try:
+            overlay = SelectionOverlay(self)
+            overlay.showFullScreen()
+            
+            if overlay.exec() == QDialog.DialogCode.Accepted:
+                rect = overlay.selected_rect()
+                if rect and rect.width() > 50 and rect.height() > 50:
+                    self.roi = rect
+                    self.save_roi()
+                    self.take_picture_btn.setEnabled(True)
+                    self.status_label.setText(f"✅ Area selected: {rect.width()}×{rect.height()} at ({rect.x()}, {rect.y()})")
+                else:
+                    QMessageBox.warning(self, "Invalid Selection", "Selected region is too small (minimum 50×50)")
+            
+        except Exception as e:
+            logger.error(f"ROI selection error: {e}")
+            QMessageBox.critical(self, "Selection Error", f"Failed to select region: {e}")
+     
+    def take_picture(self):
+        """Capture screenshot and detect cards"""
+        if not self.roi:
+            QMessageBox.warning(self, "No Area", "Please select a capture area first")
+            return
+        
+        self.status_label.setText("📸 Capturing and analyzing...")
+        
+        try:
+            # Capture frame
+            frame = self.screen_capture.grab_roi(self.roi)
+            if frame is None:
+                QMessageBox.warning(self, "Capture Failed", 
+                    "Failed to capture screenshot.\n\nCheck if ImageMagick is installed:\nsudo apt-get install imagemagick")
+                self.status_label.setText("❌ Capture failed")
+                return
+            
+            self.captured_frame = frame.copy()
+            
+            # Display captured image
+            self.display_frame(frame)
+            
+            # Run ML detection if models are available
+            if self.detector and self.classifier:
+                self.status_label.setText("🔍 Analyzing cards with neural network...")
+                self.detect_and_classify_cards(frame)
+            else:
+                self.status_label.setText("📷 Picture captured - Enter cards manually (ML models not available)")
+                
+        except Exception as e:
+            logger.error(f"Picture capture error: {e}")
+            QMessageBox.critical(self, "Capture Error", f"Failed to capture picture: {e}")
+            self.status_label.setText("❌ Error during capture")
+    
+    def detect_and_classify_cards(self, frame: np.ndarray):
+        """Detect and classify cards, auto-fill input widgets"""
+        try:
+            # Detect cards
+            detections = self.detector.predict(frame, confidence_threshold=0.4)
+            
+            # Separate player and board cards
+            player_detections = [d for d in detections if d.kind == "player"]
+            board_detections = [d for d in detections if d.kind == "board"]
+            
+            overlay_frame = frame.copy()
+            
+            # Classify and auto-fill player cards
+            classified_player_cards = []
+            for detection in player_detections:
+                x1, y1, x2, y2 = detection.bbox
+                crop = frame[y1:y2, x1:x2]
+                
+                if crop.size > 0:
+                    card_label, confidence = self.classifier.classify_crop(crop)
+                    if confidence > 0.2:
+                        detection.classification = card_label
+                        classified_player_cards.append(detection)
+                        
+                        # Draw on overlay
+                        cv2.rectangle(overlay_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                        cv2.putText(overlay_frame, f"P: {card_label}", (x1, y1-10), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            
+            # Classify and auto-fill board cards
+            classified_board_cards = []
+            for detection in board_detections:
+                x1, y1, x2, y2 = detection.bbox
+                crop = frame[y1:y2, x1:x2]
+                
+                if crop.size > 0:
+                    card_label, confidence = self.classifier.classify_crop(crop)
+                    if confidence > 0.2:
+                        detection.classification = card_label
+                        classified_board_cards.append(detection)
+                        
+                        # Draw on overlay
+                        cv2.rectangle(overlay_frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                        cv2.putText(overlay_frame, f"B: {card_label}", (x1, y1-10), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+            
+            # Update display with overlay
+            self.display_frame(overlay_frame)
+            
+            # Auto-fill player cards
+            if len(classified_player_cards) >= 1:
+                self.card1_widget.set_text(classified_player_cards[0].classification or "")
+            if len(classified_player_cards) >= 2:
+                self.card2_widget.set_text(classified_player_cards[1].classification or "")
+            
+            # Auto-fill board cards (in order from left to right)
+            board_widgets = [self.flop1_widget, self.flop2_widget, self.flop3_widget, 
+                           self.turn_widget, self.river_widget]
+            
+            for i, widget in enumerate(board_widgets):
+                if i < len(classified_board_cards):
+                    widget.set_text(classified_board_cards[i].classification or "")
+                else:
+                    widget.clear()
+            
+            # Trigger automatic analysis
+            if len(classified_player_cards) >= 2:
+                self.analyze_situation()
+                self.status_label.setText(f"✅ Detected: {len(classified_player_cards)} player, {len(classified_board_cards)} board cards")
+            else:
+                self.status_label.setText(f"⚠️ Found {len(classified_player_cards)} player cards - Complete manually")
+                
+        except Exception as e:
+            logger.error(f"Detection/classification error: {e}")
+            self.status_label.setText(f"❌ Analysis error: {str(e)[:50]}...")
+    
+    def display_frame(self, frame: np.ndarray):
+        """Display frame in image label"""
+        try:
+            if len(frame.shape) == 3:
+                height, width, channel = frame.shape
+                bytes_per_line = 3 * width
+                q_image = QImage(frame.data, width, height, bytes_per_line, QImage.Format.Format_RGB888).rgbSwapped()
+            else:
+                height, width = frame.shape
+                bytes_per_line = width
+                q_image = QImage(frame.data, width, height, bytes_per_line, QImage.Format.Format_Grayscale8)
+            
+            # Scale to fit label
+            pixmap = QPixmap.fromImage(q_image)
+            scaled_pixmap = pixmap.scaled(
+                self.image_label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            self.image_label.setPixmap(scaled_pixmap)
+            
+        except Exception as e:
+            logger.error(f"Display error: {e}")
+    
+    def analyze_situation(self):
+        """Comprehensive situation analysis"""
+        if not self.has_player_cards():
+            QMessageBox.warning(self, "Input Error", "Please enter both player cards")
+            return
+        
+        try:
+            # Get cards
+            player_cards = self.get_player_cards()
+            board_cards = self.get_board_cards()
+            
+            if len(player_cards) != 2:
+                QMessageBox.warning(self, "Invalid Cards", "Please enter valid player cards")
+                return
+            
+            # Update game state
+            self.current_game_state.player_cards = player_cards
+            self.current_game_state.board_cards = board_cards
+            self.current_game_state.stage = self.hand_analyzer.determine_game_stage(board_cards)
+            
+            self.update_game_state_display()
+            
+            # Perform analysis based on game stage
+            if self.current_game_state.stage == GameStage.PREFLOP:
+                self.analyze_postflop()
+            else:
+                self.analyze_postflop()
+            
+            self.status_label.setText("✅ Analysis complete")
+            
+        except Exception as e:
+            logger.error(f"Analysis error: {e}")
+            QMessageBox.critical(self, "Analysis Error", f"Failed to analyze: {e}")
+    
+    def analyze_preflop(self):
+        """Analyze preflop situation"""
+        while self.analysis_layout.count():
+            child = self.analysis_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+        
+        # Get hand key
+        hand_key = self.hand_analyzer.get_hand_key(self.current_game_state.player_cards)
+        cards_display = " ".join(str(card) for card in self.current_game_state.player_cards)
+        
+        # Title
+        title = QLabel(f"Префлоп анализ: {cards_display} ({hand_key})")
+        title.setStyleSheet("font-size: 20x; font-weight: bold; color: #4CAF50; padding: 10px;")
+        
+        # Get recommendations
+        table_size_str = self.current_game_state.table_size.value
+        game_type_str = self.current_game_state.game_type.value.lower()
+        
+        recommendations = self.chart_engine.get_all_position_recommendations(
+            hand_key, table_size_str, game_type_str
+        )
+        
+        # Create recommendations table
+        table_widget = QTableWidget()
+        table_widget.setColumnCount(3)
+        table_widget.setHorizontalHeaderLabels(["Position", "Opening Frequency", "Action"])
+        table_widget.setRowCount(len(recommendations))
+        
+        for row, (position, frequency) in enumerate(recommendations.items()):
+            # Position
+            pos_item = QTableWidgetItem(position)
+            pos_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            table_widget.setItem(row, 0, pos_item)
+            
+            # Frequency
+            freq_text = f"{frequency:.1%}" if frequency > 0 else "Fold"
+            freq_item = QTableWidgetItem(freq_text)
+            freq_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+            # Color code frequency
+            if frequency >= 0.8:
+                freq_item.setBackground(QColor(0, 150, 0))  # Dark green
+            elif frequency >= 0.6:
+                freq_item.setBackground(QColor(100, 200, 100))  # Green
+            elif frequency >= 0.4:
+                freq_item.setBackground(QColor(255, 255, 100))  # Yellow
+            elif frequency >= 0.2:
+                freq_item.setBackground(QColor(255, 200, 100))  # Orange
+            else:
+                freq_item.setBackground(QColor(150, 0, 0))  # Dark red
+            
+            table_widget.setItem(row, 1, freq_item)
+            
+            # Action recommendation
+            if frequency >= 0.7:
+                action = "RAISE"
+                action_color = QColor(0, 150, 0)
+            elif frequency >= 0.3:
+                action = "MIXED"
+                action_color = QColor(255, 255, 100)
+            else:
+                action = "FOLD"
+                action_color = QColor(150, 0, 0)
+            
+            action_item = QTableWidgetItem(action)
+            action_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            action_item.setBackground(action_color)
+            table_widget.setItem(row, 2, action_item)
+        
+        # Style table
+        table_widget.setStyleSheet("""
+            QTableWidget {
+                gridline-color: #444;
+                background-color: #1a1a1a;
+                alternate-background-color: #2a2a2a;
+                font-size: 12px;
+            }
+            QHeaderView::section {
+                background-color: #333;
+                color: #fff;
+                padding: 8px;
+                border: 1px solid #444;
+                font-weight: bold;
+            }
+        """)
+        table_widget.setAlternatingRowColors(True)
+        table_widget.resizeColumnsToContents()
+        table_widget.setMaximumHeight(300)
+        
+        # Add to layout
+        self.analysis_layout.addWidget(title)
+        self.analysis_layout.addWidget(table_widget)
+        self.analysis_layout.addStretch()
+    
+    def analyze_postflop(self):
+        """Analyze postflop situation with improved calculations"""
+        cards_to_come = 0
+        # Безопасная очистка existing analysis
+        while self.analysis_layout.count():
+            child = self.analysis_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        # Title с увеличенным шрифтом
+        cards_display = " ".join(str(card) for card in self.current_game_state.player_cards)
+        board_display = " ".join(str(card) for card in self.current_game_state.board_cards)
+        title = QLabel(f"Постфлоп анализ - {self.current_game_state.stage.value}")
+        title.setStyleSheet("font-size: 20px; font-weight: bold; color: #4CAF50; padding: 10px;")
+        
+        # Cards display с увеличенным шрифтом
+        cards_label = QLabel(f"Player: {cards_display} | Board: {board_display}")
+        cards_label.setStyleSheet("font-size: 16px; color: #81C784; padding: 8px; font-weight: bold;")
+        
+        # Hand strength analysis с улучшенными расчетами
+        hand_strength = self.hand_analyzer.calculate_hand_strength(
+            self.current_game_state.player_cards, 
+            self.current_game_state.board_cards
+        )
+        
+        # Новый расчет аутов
+        outs_data = self.hand_analyzer._calculate_outs(
+            self.current_game_state.player_cards,
+            self.current_game_state.board_cards
+        )
+        
+        strength_group = QGroupBox("Анализ руки")
+        strength_layout = QVBoxLayout(strength_group)
+        
+        current_hand_label = QLabel(f"Текущая комбинация: {hand_strength.get('current_hand', 'Unknown')}")
+        current_hand_label.setStyleSheet("font-size: 16px; color: #fff; padding: 8px; font-weight: bold;")
+        
+        # Детализированный анализ аутов
+        total_outs = sum(outs_data.values()) if outs_data else 0
+        if total_outs >= 0:
+            outs_text = f"🎯 АНАЛИЗ АУТОВ:\n"
+            outs_text += f"• Флеш: {outs_data.get('flush', 0)} аутов\n"
+            outs_text += f"• Стрит: {outs_data.get('straight', 0)} аутов\n"
+            outs_text += f"• Сет/Трипс: {outs_data.get('set_trips', 0)} аутов\n"
+            outs_text += f"• Оверкарты: {outs_data.get('overcard', 0)} аутов\n"
+            outs_text += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            outs_text += f"📊 ВСЕГО АУТОВ: {total_outs}\n\n"
+            
+            # Расчет шансов на улучшение (правило 4-2)
+            cards_to_come = 5 - len(self.current_game_state.board_cards)
+            if cards_to_come == 2:  # Flop to river
+                improvement_equity = min(total_outs * 4, 100)
+                stage_text = "до ривера"
+            elif cards_to_come == 1:  # Turn to river  
+                improvement_equity = min(total_outs * 2, 100)
+                stage_text = "на ривере"
+            else:
+                improvement_equity = 0
+                stage_text = "завершен"
+                
+            outs_text += f"📈 Шанс улучшения {stage_text}: {improvement_equity}%\n"
+            
+            # Симуляция реальной вероятности победы (только после флопа)
+            if len(self.current_game_state.board_cards) >= 3:
+                try:
+                    opponents_count = self.get_opponents_count(self.current_game_state.table_size)
+
+                    equity_simulation = self.hand_analyzer.simulate_equity(
+                        self.current_game_state.player_cards,
+                        self.current_game_state.board_cards,
+                        num_opponents=opponents_count,  # ✅ Правильное количество оппонентов
+                        iterations=3000
+                    )
+
+                    win_rate = equity_simulation.get('win_rate', 0)
+                    tie_rate = equity_simulation.get('tie_rate', 0)
+                    
+                    outs_text += f"\n🏆 ВЕРОЯТНОСТЬ ПОБЕДЫ:\n"
+                    outs_text += f"• Победа: {win_rate}%\n"
+                    outs_text += f"• Ничья: {tie_rate}%\n"
+                    outs_text += f"• Поражение: {equity_simulation.get('lose_rate', 0)}%"
+                    
+                except Exception as e:
+                    outs_text += f"\n🏆 Вероятность победы: Расчет недоступен"
+            else:
+                outs_text += f"\n🏆 Вероятность победы: Ожидание флопа"
+                
+        else:
+            outs_text = "❌ Значимых дро не обнаружено\n\nУ вас либо уже готовая рука, либо очень слабая позиция"
+        
+        outs_label = QLabel(outs_text)
+        outs_label.setStyleSheet("font-size: 14px; color: #ccc; padding: 8px; line-height: 1.4; font-family: 'Consolas', monospace;")
+        outs_label.setWordWrap(True)
+        
+        strength_layout.addWidget(current_hand_label)
+        strength_layout.addWidget(outs_label)
+        
+        # Board texture analysis
+        if len(self.current_game_state.board_cards) >= 3:
+            texture_analysis = self.hand_analyzer.analyze_board_texture(self.current_game_state.board_cards)
+            texture_group = QGroupBox("Текстура доски")
+            texture_layout = QVBoxLayout(texture_group)
+            
+            texture_features = []
+            if texture_analysis.get('monotone'):
+                texture_features.append("🔴 Монотон (3+ одной масти)")
+            elif texture_analysis.get('two_tone'):
+                texture_features.append("🟡 Двухцветная")
+            elif texture_analysis.get('rainbow'):
+                texture_features.append("🌈 Радужная")
+                
+            if texture_analysis.get('paired'):
+                texture_features.append("👥 Спаренная доска")
+                
+            if texture_analysis.get('coordinated'):
+                texture_features.append("🔗 Скоординированная (связанная)")
+            elif texture_analysis.get('dry'):
+                texture_features.append("🏜️ Сухая доска")
+                
+            if texture_analysis.get('flush_draw'):
+                texture_features.append("💧 Возможно флеш-дро")
+                
+            texture_text = "Характеристики доски:\n" + "\n".join(f"• {feature}" for feature in texture_features) if texture_features else "Стандартная доска"
+            
+            texture_label = QLabel(texture_text)
+            texture_label.setStyleSheet("font-size: 14px; color: #ccc; padding: 8px; line-height: 1.4;")
+            texture_label.setWordWrap(True)
+            texture_layout.addWidget(texture_label)
+        else:
+            texture_group = QLabel("Нужен минимум флоп для анализа текстуры")
+            texture_group.setStyleSheet("font-size: 14px; color: #888; padding: 8px;")
+        
+        # Strategic recommendations с улучшенной логикой
+        recommendations_group = QGroupBox("ABC Рекомендации")
+        recommendations_layout = QVBoxLayout(recommendations_group)
+        
+        # Генерация рекомендации на основе комплексного анализа
+        current_hand_type = hand_strength.get('current_hand', 'High card').lower()
+        
+        # Определяем силу руки
+        strong_hands = ['four of a kind', 'full house', 'flush', 'straight', 'three of a kind']
+        medium_hands = ['two pair', 'one pair']
+        
+        # Получаем данные о вероятности победы если доступны
+        win_probability = None
+        if len(self.current_game_state.board_cards) >= 3:
+            try:
+                equity_data = self.hand_analyzer.simulate_equity(
+                    self.current_game_state.player_cards,
+                    self.current_game_state.board_cards,
+                    num_opponents=1, 
+                    iterations=1000
+                )
+                win_probability = equity_data.get('win_rate', 0)
+            except:
+                pass
+        
+        # Логика рекомендаций
+        if any(hand in current_hand_type for hand in strong_hands):
+            if win_probability and win_probability > 70:
+                strategy = "💪 ОЧЕНЬ СИЛЬНАЯ РУКА - Ставьте крупно на вэлью!"
+            else:
+                strategy = "✅ СИЛЬНАЯ РУКА - Ставьте на вэлью"
+        elif any(hand in current_hand_type for hand in medium_hands):
+            if win_probability and win_probability > 55:
+                strategy = "👍 СРЕДНЯЯ РУКА - Ставьте средне или коллируйте"
+            else:
+                strategy = "⚠️ ОСТОРОЖНО - Чек-колл или небольшая ставка"
+        elif total_outs >= 12:
+            strategy = "🚀 МОНСТР-ДРО - Играйте очень агрессивно!"
+        elif total_outs >= 8:
+            strategy = "⚡ ХОРОШЕЕ ДРО - Полу-блеф или колл"
+        elif total_outs >= 4:
+            strategy = "🤏 СЛАБОЕ ДРО - Коллируйте дешево"
+        else:
+            if cards_to_come == 0:  # Река
+                strategy = "❌ СЛАБАЯ РУКА - Скорее всего ФОЛД к ставкам"
+            else:
+                strategy = "😐 СЛАБАЯ ПОЗИЦИЯ - Чек или фолд к агрессии"
+        
+        strategy_label = QLabel(f"🎯 {strategy}")
+        strategy_label.setStyleSheet("font-size: 16px; color: #FFD700; padding: 15px; font-weight: bold; border: 2px solid #FFD700; border-radius: 8px; background-color: rgba(255, 215, 0, 0.1);")
+        strategy_label.setWordWrap(True)
+        recommendations_layout.addWidget(strategy_label)
+        
+        # Дополнительные соображения
+        additional_info = ""
+        if len(self.current_game_state.board_cards) >= 3:
+            if texture_analysis.get('coordinated') and 'high card' in current_hand_type:
+                additional_info += "⚠️ Осторожно: скоординированная доска опасна для слабых рук\n"
+            if texture_analysis.get('paired') and total_outs < 4:
+                additional_info += "🏠 Внимание: спаренная доска - возможны фулл-хаусы\n"
+            if texture_analysis.get('monotone') and total_outs < 8:
+                additional_info += "💧 Осторожно: монотонная доска - высок риск флеша\n"
+                
+        if additional_info:
+            info_label = QLabel(additional_info.strip())
+            info_label.setStyleSheet("font-size: 13px; color: #FFA726; padding: 8px; font-style: italic;")
+            info_label.setWordWrap(True)
+            recommendations_layout.addWidget(info_label)
+        
+        # Add all to layout
+        self.analysis_layout.addWidget(title)
+        self.analysis_layout.addWidget(cards_label)
+        self.analysis_layout.addWidget(strength_group)
+        if isinstance(texture_group, QGroupBox):
+            self.analysis_layout.addWidget(texture_group)
+        else:
+            self.analysis_layout.addWidget(texture_group)
+        self.analysis_layout.addWidget(recommendations_group)
+        self.analysis_layout.addStretch()
+
+
+
+    
+    def save_roi(self):
+        """Save ROI to config file"""
+        if self.roi:
+            roi_data = [self.roi.x(), self.roi.y(), self.roi.width(), self.roi.height()]
+            config_data = {"roi": roi_data}
+            try:
+                with open("gui_config.json", 'w') as f:
+                    json.dump(config_data, f, indent=2)
+                logger.info(f"ROI saved: {roi_data}")
+            except Exception as e:
+                logger.error(f"Failed to save ROI: {e}")
+    
+    def load_roi(self):
+        """Load ROI from config file"""
+        config_file = Path("gui_config.json")
+        if config_file.exists():
+            try:
+                with open(config_file, 'r') as f:
+                    data = json.load(f)
+                roi_data = data.get('roi')
+                if roi_data and len(roi_data) == 4:
+                    self.roi = QRect(*roi_data)
+                    self.take_picture_btn.setEnabled(True)
+                    self.status_label.setText(f"📁 Loaded saved area: {roi_data[2]}×{roi_data[3]} at ({roi_data[0]}, {roi_data[1]})")
+            except Exception as e:
+                logger.warning(f"Failed to load ROI: {e}")
+
+    def clear_all_inputs(self):
+        """Clear all input widgets"""
+        self.card1_widget.clear()
+        self.card2_widget.clear()
+        self.flop1_widget.clear()
+        self.flop2_widget.clear()
+        self.flop3_widget.clear()
+        self.turn_widget.clear()
+        self.river_widget.clear()
+        
+        # Reset game state
+        self.current_game_state.player_cards = []
+        self.current_game_state.board_cards = []
+        self.current_game_state.stage = GameStage.PREFLOP
+        
+        self.update_game_state_display()
+        self.create_default_analysis()
+        self.status_label.setText("🔄 All inputs cleared")
+
+    def closeEvent(self, event):
+        """Handle application close"""
+        logger.info("Application closing")
+        event.accept()
+
+=======================================
+main.py
+import sys
+import logging
+from PySide6.QtWidgets import QApplication, QMessageBox, QLineEdit, QDialog
+from PySide6.QtGui import QShortcut, QKeySequence
+from PySide6.QtCore import QTimer
+from ui.hwid_dialog import HWIDDialog
+from app_window import PokerMLLiteGUI
+
+# Импортируем систему лицензирования
+from core.license_integration import initialize_license_system, check_license_before_action, shutdown_license_system, license_manager
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def show_license_error():
+    """Показ ошибки лицензии с HWID диалогом"""
+    
+    # Создаем HWID диалог для показа ошибки
+    error_dialog = HWIDDialog()
+    
+    # Настраиваем как диалог ошибки
+    error_dialog.setWindowTitle("❌ PoRTA - Ошибка лицензии")
+    
+    # Обновляем текст инструкций
+    if hasattr(error_dialog, 'instruction_label'):
+        error_dialog.instruction_label.setText(
+            "❌ ОШИБКА ЛИЦЕНЗИИ!\n\n"
+            "Возможные причины:\n"
+            "• Лицензия не активирована для данного компьютера\n"
+            "• Истек срок действия лицензии\n"
+            "• Нет подключения к интернету (grace period истек)\n\n"
+            "📋 Скопируйте HWID и отправьте администратору:"
+        )
+    
+    # Если есть кнопка закрытия, меняем ее текст
+    if hasattr(error_dialog, 'close_button'):
+        error_dialog.close_button.setText("Понятно")
+        # Оставляем стандартное поведение закрытия
+    
+    # Добавляем стиль ошибки
+    error_dialog.setStyleSheet(error_dialog.styleSheet() + """
+        QDialog {
+            border: 3px solid #ff4444;
+        }
+        QLabel {
+            color: #ff6666;
+        }
+        QPushButton {
+            background-color: #ff4444;
+            border-color: #ff6666;
+        }
+        QPushButton:hover {
+            background-color: #ff6666;
+        }
+    """)
+    
+    # Показываем диалог
+    error_dialog.exec()
+
+
+def main():
+    """Main application entry point with license checking"""
+    print("=" * 60)
+    print("PoRTA 2 - Advanced Poker Analysis Tool")
+    print("=" * 60)
+    
+    # Initialize logging
+    logger.info("Starting PoRTA 2...")
+    
+    try:
+        app = QApplication(sys.argv)
+        app.setApplicationName("PoRTA 2 - Advanced Poker Analysis")
+        app.setApplicationVersion("2.0") 
+        app.setOrganizationName("PokerTools")
+        
+        # Apply dark theme
+        app.setStyle("Fusion")
+        app.setStyleSheet("""
+            QWidget { 
+                background-color: #2b2b2b; 
+                color: #ffffff; 
+                font-family: 'Ubuntu', 'Segoe UI', 'Arial', sans-serif;
+                font-size: 12px;
+            }
+            QLineEdit {
+                background-color: #1a1a1a;
+                border: 2px solid #555;
+                color: #ffffff;
+                border-radius: 6px;
+                padding: 8px;
+                font-size: 13px;
+            }
+            QLineEdit:focus {
+                border-color: #4CAF50;
+                background-color: #222;
+            }
+            QPushButton {
+                background-color: #404040;
+                border: 1px solid #666;
+                color: #ffffff;
+                padding: 10px 18px;
+                border-radius: 6px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #505050;
+                border-color: #777;
+            }
+            QPushButton:pressed {
+                background-color: #353535;
+            }
+            QPushButton:disabled {
+                background-color: #2a2a2a;
+                color: #666666;
+                border-color: #444;
+            }
+        """)
+        
+        # Шаг 1: Инициализация системы лицензирования
+        logger.info("Initializing license system...")
+        if not initialize_license_system():
+            logger.error("License initialization failed")
+            show_license_error()
+            return 1
+        
+        # Шаг 2: Показываем HWID dialog
+        hwid_dialog = HWIDDialog()
+        
+        # Проверяем лицензию перед показом диалога
+        if check_license_before_action():
+            # Лицензия валидна - показываем диалог на 3 секунды и автоматически закрываем
+            hwid_dialog.show()
+            
+            # Создаем таймер для автоматического закрытия через 3 секунды
+            close_timer = QTimer()
+            close_timer.setSingleShot(True)
+            close_timer.timeout.connect(lambda: hwid_dialog.accept())
+            close_timer.start(3000)  # 3 секунды
+            
+            # Обновляем заголовок диалога
+            hwid_dialog.setWindowTitle("✓ PoRTA 2 - Лицензия активна")
+            
+            # Добавляем информацию о том, что окно закроется автоматически
+            if hasattr(hwid_dialog, 'instruction_label'):
+                hwid_dialog.instruction_label.setText(
+                    "✅ Лицензия активна!\n\n"
+                    "HWID зарегистрирован в системе.\n"
+                    "Окно автоматически закроется через 3 секунды..."
+                )
+            
+            logger.info("License is valid - auto-closing HWID dialog in 3 seconds")
+            
+        else:
+            # Лицензия не валидна - диалог остается открытым
+            hwid_dialog.setWindowTitle("❌ PoRTA 2 - Требуется активация лицензии")
+            
+            # Обновляем инструкции
+            if hasattr(hwid_dialog, 'instruction_label'):
+                hwid_dialog.instruction_label.setText(
+                    "❌ Лицензия не найдена!\n\n"
+                    "Скопируйте HWID и отправьте администратору для активации лицензии.\n"
+                    "После активации перезапустите приложение."
+                )
+            
+            # Убираем кнопку "Закрыть" или делаем её неактивной
+            if hasattr(hwid_dialog, 'close_button'):
+                hwid_dialog.close_button.setText("Выход")
+                hwid_dialog.close_button.clicked.disconnect()
+                hwid_dialog.close_button.clicked.connect(lambda: [shutdown_license_system(), app.quit()])
+            
+            logger.info("License is invalid - keeping HWID dialog open")
+        
+        # Выполняем диалог
+        dialog_result = hwid_dialog.exec()
+        
+        if dialog_result != QDialog.DialogCode.Accepted:
+            logger.info("Application cancelled by user or license invalid")
+            shutdown_license_system()
+            return 0
+        
+        # Шаг 3: Финальная проверка лицензии перед запуском GUI (только если диалог был принят)
+        if not check_license_before_action():
+            logger.error("License check failed before GUI launch")
+            show_license_error()
+            shutdown_license_system()
+            return 1
+        
+        # Шаг 4: Запуск основного приложения (только при валидной лицензии)
+        logger.info("License validated - starting main application...")
+        window = PokerMLLiteGUI()
+        
+        # Добавляем периодическую проверку лицензии в критических операциях
+        if hasattr(window, 'analyze_situation'):
+            original_analyze = window.analyze_situation
+            def licensed_analyze():
+                if check_license_before_action():
+                    original_analyze()
+                else:
+                    show_license_error()
+                    
+            window.analyze_situation = licensed_analyze
+        
+        # Настройка горячих клавиш
+        quit_shortcut = QShortcut(QKeySequence("Ctrl+Q"), window)
+        quit_shortcut.activated.connect(lambda: [shutdown_license_system(), app.quit()])
+        
+        if hasattr(window, 'clear_all_inputs'):
+            clear_shortcut = QShortcut(QKeySequence("Ctrl+R"), window)  
+            clear_shortcut.activated.connect(window.clear_all_inputs)
+        
+        if hasattr(window, 'take_picture'):
+            picture_shortcut = QShortcut(QKeySequence("F5"), window)
+            picture_shortcut.activated.connect(lambda: window.take_picture() if hasattr(window, 'roi') and window.roi else None)
+        
+        if hasattr(window, 'analyze_situation'):
+            analyze_shortcut = QShortcut(QKeySequence("F1"), window)
+            analyze_shortcut.activated.connect(licensed_analyze)
+        
+        window.show()
+        
+        print("Enhanced Features:")
+        print("• Extended table support (2-max, 4-max, 6-max, 9-max)")
+        print("• Cash and Tournament (TTM) game types")  
+        print("• Advanced postflop analysis with equity calculations")
+        print("• Board texture analysis (coordinated, paired, suited)")
+        print("• ML-powered card detection for player AND board cards")
+        print("• Multi-stage analysis (Preflop, Flop, Turn, River)")
+        print("• License validation and periodic checks")
+        print("• Grace period support for offline usage")
+        print("")
+        print("Keyboard shortcuts:")
+        print("• Ctrl+Q: Quit application")
+        print("• Ctrl+R: Clear all card inputs") 
+        print("• F5: Capture and analyze table")
+        print("• F1: Analyze current situation")
+        print("• Enter: Auto-analyze when typing cards")
+        print("")
+        
+        logger.info("PoRTA 2 started successfully")
+        result = app.exec()
+        
+        # Корректное завершение системы лицензирования
+        shutdown_license_system()
+        return result
+        
+    except Exception as e:
+        logger.critical(f"Application startup failed: {e}")
+        QMessageBox.critical(None, "Startup Error", 
+                           f"Failed to start application:\n{e}\n\n"
+                           "Please ensure that all dependencies are installed.")
+        shutdown_license_system()
+        return 1
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+=================================
+hwid_dialog.py
+
+from PyQt6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
+    QTextEdit, QFrame, QApplication, QMessageBox
+)
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+from PyQt6.QtGui import QFont, QIcon, QPixmap, QClipboard
+from utils.hwid_generator import HWIDGenerator
+import logging
+
+logger = logging.getLogger(__name__)
+
+class HWIDDialog(QDialog):
+    """Диалоговое окно для отображения HWID пользователя"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Активация лицензии - PoRTA 2")
+        self.setFixedSize(500, 300)
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowCloseButtonHint)
+        self.setModal(True)
+        
+        # Генерируем HWID
+        try:
+            self.hwid = HWIDGenerator.generate_hwid()
+            logger.info(f"Generated HWID: {self.hwid}")
+        except Exception as e:
+            logger.error(f"Error generating HWID: {e}")
+            self.hwid = "ERROR-GENERATING-HWID"
+        
+        self.setup_ui()
+        self.setup_styles()
+    
+    def setup_ui(self):
+        """Настройка пользовательского интерфейса"""
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+        
+        # Заголовок
+        title_label = QLabel("🔐 Активация лицензии")
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_font = QFont()
+        title_font.setPointSize(16)
+        title_font.setBold(True)
+        title_label.setFont(title_font)
+        layout.addWidget(title_label)
+        
+        # Разделитель
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        layout.addWidget(separator)
+        
+        # Инструкция
+        instruction_label = QLabel(
+            "Для активации лицензии скопируйте ваш уникальный HWID\n"
+            "и отправьте его администратору:"
+        )
+        instruction_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        instruction_label.setWordWrap(True)
+        layout.addWidget(instruction_label)
+        
+        # HWID поле
+        self.hwid_display = QTextEdit()
+        self.hwid_display.setPlainText(self.hwid)
+        self.hwid_display.setReadOnly(True)
+        self.hwid_display.setMaximumHeight(60)
+        self.hwid_display.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.hwid_display)
+        
+        # Кнопки
+        button_layout = QHBoxLayout()
+        button_layout.setSpacing(10)
+        
+        self.copy_button = QPushButton("📋 Копировать HWID")
+        self.copy_button.clicked.connect(self.copy_hwid)
+        button_layout.addWidget(self.copy_button)
+        
+        self.close_button = QPushButton("❌ Закрыть")
+        self.close_button.clicked.connect(self.reject)
+        button_layout.addWidget(self.close_button)
+        
+        layout.addLayout(button_layout)
+        
+        # Дополнительная информация
+        info_label = QLabel(
+            "💡 После получения лицензии перезапустите приложение"
+        )
+        info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        info_label.setStyleSheet("color: #666; font-size: 12px;")
+        layout.addWidget(info_label)
+    
+    def setup_styles(self):
+        """Настройка стилей"""
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #2b2b2b;
+                color: #ffffff;
+                border-radius: 10px;
+            }
+            QLabel {
+                color: #ffffff;
+                padding: 5px;
+            }
+            QTextEdit {
+                background-color: #1a1a1a;
+                color: #00ff00;
+                border: 2px solid #4CAF50;
+                border-radius: 5px;
+                padding: 10px;
+                font-family: 'Courier New', monospace;
+                font-size: 12px;
+                font-weight: bold;
+                selection-background-color: #4CAF50;
+            }
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                padding: 10px 15px;
+                border-radius: 5px;
+                font-weight: bold;
+                font-size: 12px;
+                min-width: 120px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+                transform: translateY(-1px);
+            }
+            QPushButton:pressed {
+                background-color: #3d8b40;
+                transform: translateY(1px);
+            }
+            QPushButton#close_button {
+                background-color: #f44336;
+            }
+            QPushButton#close_button:hover {
+                background-color: #da190b;
+            }
+            QPushButton#close_button:pressed {
+                background-color: #b71c1c;
+            }
+            QFrame {
+                color: #666;
+            }
+        """)
+        
+        # Устанавливаем ID для кнопки закрытия
+        self.close_button.setObjectName("close_button")
+    
+    def copy_hwid(self):
+        """Копирование HWID в буфер обмена"""
+        try:
+            clipboard = QApplication.clipboard()
+            clipboard.setText(self.hwid)
+            
+            # Показываем уведомление
+            self.copy_button.setText("✅ Скопировано!")
+            self.copy_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #2196F3;
+                    color: white;
+                }
+            """)
+            
+            # Возвращаем исходный текст через 2 секунды
+            QTimer.singleShot(2000, self.reset_copy_button)
+            
+            logger.info("HWID copied to clipboard")
+            
+        except Exception as e:
+            logger.error(f"Error copying HWID: {e}")
+            QMessageBox.warning(self, "Ошибка", "Не удалось скопировать HWID")
+    
+    def reset_copy_button(self):
+        """Сброс текста кнопки копирования"""
+        self.copy_button.setText("📋 Копировать HWID")
+        self.copy_button.setStyleSheet("")  # Возвращаем к стандартному стилю
+    
+    def get_hwid(self) -> str:
+        """Получение сгенерированного HWID"""
+        return self.hwid
+
+====================================
+
+hwid_generator.py
+import hashlib
+import platform
+import subprocess
+import uuid
+import re
+from typing import Optional
+
+class HWIDGenerator:
+    """Генератор устойчивого HWID на основе характеристик оборудования"""
+    
+    @staticmethod
+    def get_system_disk_serial() -> str:
+        """Получение серийного номера системного диска"""
+        try:
+            if platform.system() == 'Windows':
+                # Windows - через WMI
+                result = subprocess.run(['wmic', 'diskdrive', 'get', 'serialnumber'], 
+                                      capture_output=True, text=True)
+                lines = result.stdout.strip().split('\n')
+                for line in lines[1:]:  # Пропускаем заголовок
+                    serial = line.strip()
+                    if serial and serial != 'SerialNumber':
+                        return serial
+            else:
+                # Linux/Mac - через lsblk или diskutil
+                result = subprocess.run(['lsblk', '-o', 'SERIAL', '-n'], 
+                                      capture_output=True, text=True)
+                if result.stdout:
+                    serials = [s.strip() for s in result.stdout.split('\n') if s.strip()]
+                    if serials:
+                        return serials[0]
+        except Exception:
+            pass
+        return "UNKNOWN_DISK_SERIAL"
+    
+    @staticmethod
+    def get_cpu_id() -> str:
+        """Получение ID процессора"""
+        try:
+            if platform.system() == 'Windows':
+                result = subprocess.run(['wmic', 'cpu', 'get', 'processorid'], 
+                                      capture_output=True, text=True)
+                lines = result.stdout.strip().split('\n')
+                for line in lines[1:]:
+                    cpu_id = line.strip()
+                    if cpu_id and cpu_id != 'ProcessorId':
+                        return cpu_id
+            else:
+                # Linux - через /proc/cpuinfo
+                with open('/proc/cpuinfo', 'r') as f:
+                    for line in f:
+                        if 'processor' in line.lower():
+                            return line.split(':')[1].strip()
+        except Exception:
+            pass
+        return "UNKNOWN_CPU_ID"
+    
+    @staticmethod
+    def get_primary_mac() -> str:
+        """Получение MAC-адреса основного сетевого интерфейса"""
+        try:
+            # Получаем MAC-адрес через uuid
+            mac = ':'.join(re.findall('..', '%012x' % uuid.getnode()))
+            return mac
+        except Exception:
+            return "UNKNOWN_MAC_ADDRESS"
+    
+    @staticmethod
+    def get_motherboard_serial() -> str:
+        """Получение серийного номера материнской платы"""
+        try:
+            if platform.system() == 'Windows':
+                result = subprocess.run(['wmic', 'baseboard', 'get', 'serialnumber'], 
+                                      capture_output=True, text=True)
+                lines = result.stdout.strip().split('\n')
+                for line in lines[1:]:
+                    serial = line.strip()
+                    if serial and serial != 'SerialNumber':
+                        return serial
+            else:
+                # Linux - через dmidecode
+                result = subprocess.run(['dmidecode', '-s', 'baseboard-serial-number'], 
+                                      capture_output=True, text=True)
+                if result.stdout:
+                    return result.stdout.strip()
+        except Exception:
+            pass
+        return "UNKNOWN_MOTHERBOARD"
+    
+    @staticmethod
+    def get_bios_serial() -> str:
+        """Получение серийного номера BIOS"""
+        try:
+            if platform.system() == 'Windows':
+                result = subprocess.run(['wmic', 'bios', 'get', 'serialnumber'], 
+                                      capture_output=True, text=True)
+                lines = result.stdout.strip().split('\n')
+                for line in lines[1:]:
+                    serial = line.strip()
+                    if serial and serial != 'SerialNumber':
+                        return serial
+            else:
+                result = subprocess.run(['dmidecode', '-s', 'bios-serial-number'], 
+                                      capture_output=True, text=True)
+                if result.stdout:
+                    return result.stdout.strip()
+        except Exception:
+            pass
+        return "UNKNOWN_BIOS"
+    
+    @classmethod
+    def generate_hwid(cls) -> str:
+        """Генерация устойчивого HWID"""
+        # Собираем все идентификаторы
+        components = [
+            cls.get_system_disk_serial(),
+            cls.get_cpu_id(),
+            cls.get_primary_mac(),
+            cls.get_motherboard_serial(),
+            cls.get_bios_serial(),
+            platform.machine(),
+            platform.system(),
+            "qpkeo2k2ok2kmdkd2"  # Скрытый параметр из ТЗ
+        ]
+        
+        # Объединяем и хешируем
+        combined_string = "|".join(components)
+        hwid_hash = hashlib.sha256(combined_string.encode('utf-8')).hexdigest()
+        
+        # Форматируем в виде групп по 8 символов
+        formatted_hwid = '-'.join([hwid_hash[i:i+8].upper() for i in range(0, 32, 8)])
+        
+        return formatted_hwid
+
+
+==================================
+
+license_client.py
+import requests
+import json
+import time
+import hmac
+import hashlib
+import random
+import string
+import logging
+from typing import Optional, Dict, Any
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
+class LicenseClient:
+    def __init__(self, api_base_url: str, hmac_secret_key: str, hwid: str):
+        self.api_base_url = "http://85.239.147.227:8000/api/v1"
+        self.hmac_secret_key = hmac_secret_key  
+        self.hwid = hwid
+        self.last_check = None
+        self.grace_period_start = None
+        
+    def _generate_hmac_signature(self, data: str) -> str:
+        """Генерация HMAC-SHA256 подписи"""
+        return hmac.new(
+            self.hmac_secret_key.encode('utf-8'),
+            data.encode('utf-8'),
+            hashlib.sha256
+        ).hexdigest()
+    
+    def _generate_nonce(self, length=8) -> str:
+        """Генерация случайного nonce"""
+        return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+    
+    def _make_request(self, endpoint: str, data: Dict[Any, Any]) -> Optional[Dict[Any, Any]]:
+        """Выполнение запроса с HMAC аутентификацией"""
+        try:
+            json_data = json.dumps(data)
+            signature = self._generate_hmac_signature(json_data)
+            
+            headers = {
+                "Content-Type": "application/json",
+                "X-Signature": signature
+            }
+            
+            response = requests.post(
+                f"{self.api_base_url}/{endpoint}",
+                data=json_data,
+                headers=headers,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            elif response.status_code in [400, 401, 404]:
+                # Сервер ответил, но с ошибкой - НЕ включаем Grace Period
+                logger.error(f"API request failed: {response.status_code} - {response.text}")
+                return {"is_active": False}  # Явно возвращаем неактивную лицензию
+            else:
+                logger.error(f"API request failed: {response.status_code} - {response.text}")
+                return None  # Сетевая/серверная ошибка - можно включать Grace Period
+                
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"Connection error: {e}")
+            return None  # Сервер недоступен - включаем Grace Period
+        except requests.exceptions.Timeout as e:
+            logger.error(f"Timeout error: {e}")
+            return None  # Таймаут - включаем Grace Period
+        except Exception as e:
+            logger.error(f"Unexpected error during license check: {e}")
+            return None  # Неожиданная ошибка - включаем Grace Period
+
+    
+    def check_license(self) -> bool:
+        """Проверка лицензии согласно ТЗ"""
+        request_data = {
+            "hwid": self.hwid,
+            "timestamp": int(time.time()),
+            "nonce": self._generate_nonce()
+        }
+        
+        result = self._make_request("license/check", request_data)
+        
+        if result is not None:
+            # Сервер ответил (успешно или с ошибкой лицензии)
+            self.last_check = datetime.now()
+            self.grace_period_start = None  # Сбрасываем grace period
+            
+            # Проверяем подпись ответа для дополнительной безопасности
+            response_copy = result.copy()
+            signature = response_copy.pop('signature', '')
+            response_json = json.dumps(response_copy, sort_keys=True)
+            expected_signature = self._generate_hmac_signature(response_json)
+            
+            if signature != expected_signature:
+                logger.error("Invalid response signature from server")
+                return False
+            
+            # КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: возвращаем точный статус из БД
+            is_active = result.get('is_active', False)
+            logger.info(f"Server responded: is_active={is_active}")
+            return is_active
+            
+        else:
+            # ТОЛЬКО здесь включаем Grace Period - когда сервер НЕДОСТУПЕН
+            logger.warning("Server is unavailable - checking grace period")
+            
+            if not self.grace_period_start:
+                self.grace_period_start = datetime.now()
+                logger.info("Started grace period due to server unavailability")
+                return True  # Разрешаем работу в начале grace period
+            else:
+                # Проверяем не истек ли grace period (4 часа)
+                grace_elapsed = (datetime.now() - self.grace_period_start).total_seconds()
+                if grace_elapsed < 4 * 3600:  # 4 часа
+                    logger.info(f"Grace period active: {grace_elapsed/3600:.1f}/4 hours")
+                    return True
+                else:
+                    logger.error("Grace period expired, blocking access")
+                    return False
+
+    
+    def get_license_info(self) -> Optional[Dict[Any, Any]]:
+        """Получение детальной информации о лицензии"""
+        request_data = {
+            "hwid": self.hwid,
+            "timestamp": int(time.time()),
+            "nonce": self._generate_nonce()
+        }
+        
+        return self._make_request("license/info", request_data)
+
+=========================================================
+
+license_integration.py
+
+import os
+import sys
+import logging
+from datetime import datetime, timedelta
+from typing import Optional
+import threading
+import time
+
+# Импортируем HWIDGenerator из существующего приложения
+from utils.hwid_generator import HWIDGenerator
+from utils.license_client import LicenseClient
+
+logger = logging.getLogger(__name__)
+
+class LicenseManager:
+    """Менеджер лицензий для покерного приложения согласно ТЗ"""
+    
+    def __init__(self):
+        # Настройки API (в production вынести в конфиг)
+        self.api_base_url = "http://localhost:8000/api/v1"  # Замени на реальный URL
+        self.hmac_secret_key = "super-secure-hmac-key-for-production-change-this-immediately"
+        
+        # Генерируем HWID
+        self.hwid_generator = HWIDGenerator()
+        self.hwid = self.generate_hwid()
+        
+        # Инициализируем клиент
+        self.license_client = LicenseClient(
+            api_base_url=self.api_base_url,
+            hmac_secret_key=self.hmac_secret_key,
+            hwid=self.hwid
+        )
+        
+        # Состояние лицензии
+        self.is_licensed = False
+        self.last_check = None
+        self.license_valid_until = None
+        
+        # Поток для периодической проверки
+        self.check_thread = None
+        self.should_check = False
+        
+    def generate_hwid(self) -> str:
+        """Генерируем HWID используя существующий генератор"""
+        try:
+            return self.hwid_generator.generate_hwid()
+        except Exception as e:
+            logger.error(f"Failed to generate HWID: {e}")
+            # Fallback HWID если генератор не работает
+            return "FALLBACK_HWID_ERROR"
+    
+    def check_license_sync(self) -> bool:
+        """Синхронная проверка лицензии"""
+        logger.info(f"Checking license for HWID: {self.hwid}")
+        
+        result = self.license_client.check_license()
+        self.is_licensed = result
+        self.last_check = datetime.now()
+        
+        if result:
+            # Получаем детальную информацию
+            license_info = self.license_client.get_license_info()
+            if license_info and 'valid_until' in license_info:
+                try:
+                    # Парсим ISO 8601 дату
+                    valid_until_str = license_info['valid_until'].replace('Z', '+00:00')
+                    self.license_valid_until = datetime.fromisoformat(valid_until_str)
+                    logger.info(f"License valid until: {self.license_valid_until}")
+                except Exception as e:
+                    logger.error(f"Failed to parse license date: {e}")
+        
+        logger.info(f"License check result: {result}")
+        return result
+    
+    def start_periodic_check(self, interval_minutes: int = 30):
+        """Запуск периодической проверки лицензии (каждые 30 минут согласно ТЗ)"""
+        if self.check_thread and self.check_thread.is_alive():
+            return
+            
+        self.should_check = True
+        self.check_thread = threading.Thread(target=self._periodic_check_worker, args=(interval_minutes,))
+        self.check_thread.daemon = True
+        self.check_thread.start()
+        logger.info(f"Started periodic license checking every {interval_minutes} minutes")
+    
+    def stop_periodic_check(self):
+        """Остановка периодической проверки"""
+        self.should_check = False
+        if self.check_thread:
+            self.check_thread.join(timeout=5)
+        logger.info("Stopped periodic license checking")
+    
+    def _periodic_check_worker(self, interval_minutes: int):
+        """Рабочий поток для периодической проверки"""
+        while self.should_check:
+            try:
+                self.check_license_sync()
+                
+                # Ждем указанный интервал
+                for _ in range(interval_minutes * 60):
+                    if not self.should_check:
+                        break
+                    time.sleep(1)
+                    
+            except Exception as e:
+                logger.error(f"Error in periodic license check: {e}")
+                time.sleep(60)  # При ошибке ждем 1 минуту
+    
+    def is_license_valid(self) -> bool:
+        """Проверка валидности лицензии (с учетом grace period)"""
+        # Если недавно проверяли и лицензия была активна
+        if (self.last_check and 
+            (datetime.now() - self.last_check).total_seconds() < 1800 and  # 30 минут
+            self.is_licensed):
+            return True
+            
+        # Если давно не проверяли, проверяем сейчас
+        if not self.last_check or (datetime.now() - self.last_check).total_seconds() > 1800:
+            return self.check_license_sync()
+            
+        return self.is_licensed
+    
+    def get_license_status(self) -> dict:
+        """Получение статуса лицензии для отображения в UI"""
+        return {
+            "is_valid": self.is_licensed,
+            "hwid": self.hwid,
+            "last_check": self.last_check,
+            "valid_until": self.license_valid_until,
+            "grace_period_active": hasattr(self.license_client, 'grace_period_start') and 
+                                 self.license_client.grace_period_start is not None
+        }
+
+# Глобальный экземпляр менеджера лицензий
+license_manager = None
+
+def initialize_license_system() -> bool:
+    """Инициализация системы лицензирования при запуске приложения"""
+    global license_manager
+    
+    try:
+        logger.info("Initializing license system...")
+        license_manager = LicenseManager()
+        
+        # Первичная проверка лицензии
+        if not license_manager.check_license_sync():
+            logger.error("License check failed - application may be blocked")
+            return False
+        
+        # Запускаем периодическую проверку
+        license_manager.start_periodic_check(30)  # Каждые 30 минут
+        
+        logger.info("License system initialized successfully")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize license system: {e}")
+        return False
+
+def check_license_before_action() -> bool:
+    """Проверка лицензии перед критическими действиями"""
+    global license_manager
+    
+    if not license_manager:
+        logger.error("License system not initialized")
+        return False
+    
+    return license_manager.is_license_valid()
+
+def shutdown_license_system():
+    """Завершение работы системы лицензирования"""
+    global license_manager
+    
+    if license_manager:
+        license_manager.stop_periodic_check()
+        logger.info("License system shutdown")
+

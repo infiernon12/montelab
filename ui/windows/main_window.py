@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional, List
 import numpy as np
 import cv2
+from utils.global_hotkeys import get_hotkey_manager
 
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                                QPushButton, QGroupBox, QScrollArea, QMessageBox,
@@ -16,6 +17,7 @@ from core.domain import Card, GameState, GameStage, TableSize, GameType
 from services.ml_service import MLService
 from services.analysis_service import AnalysisService
 from ui.widgets import CardInputWidget, SelectionOverlay
+from ui.ml_worker import MLWorker
 from utils.screen_capture import ScreenCapture
 
 logger = logging.getLogger(__name__)
@@ -29,7 +31,12 @@ class MainWindow(QWidget):
         self.ml_service = ml_service
         self.analysis_service = analysis_service
         self.screen_capture = ScreenCapture()
-        
+
+        # ML Worker Thread for async processing
+        self.ml_worker = MLWorker(ml_service)
+        self.ml_worker.detection_complete.connect(self._on_detection_complete)
+        self.ml_worker.detection_failed.connect(self._on_detection_failed)
+
         self.roi: Optional[QRect] = None
         self.captured_frame: Optional[np.ndarray] = None
         self.game_state = GameState(
@@ -39,13 +46,25 @@ class MainWindow(QWidget):
             player_cards=[],
             board_cards=[]
         )
-        
+
         self.setup_ui()
         self.load_roi()
-        
+
         self.analysis_timer = QTimer(self)
         self.analysis_timer.setSingleShot(True)
         self.analysis_timer.timeout.connect(self.analyze_situation)
+        self.hotkey_manager = get_hotkey_manager()
+    
+        if self.hotkey_manager.is_available():
+            # Connect signals
+            self.hotkey_manager.numpad_pressed.connect(self._on_hotkey_opponent_select)
+            self.hotkey_manager.enter_pressed.connect(self._on_hotkey_capture)
+            
+            # Register hotkeys
+            self.hotkey_manager.register_hotkeys()
+            logger.info("✅ Global hotkeys enabled")
+        else:
+            logger.warning("⚠️  Global hotkeys not available (install: pip install keyboard)")
     
     def setup_ui(self):
         """Setup user interface"""
@@ -397,52 +416,74 @@ class MainWindow(QWidget):
             self.status_label.setText("❌ Capture error")
     
     def _detect_and_fill_cards(self, frame: np.ndarray):
+        """Start async ML detection in background thread (non-blocking)"""
         try:
-            player_cards, board_cards = self.ml_service.detect_and_classify(frame, confidence_threshold=0.4)
-            
-            overlay_frame = frame.copy()
-            
+            # Check if worker is already running
+            if self.ml_worker.isRunning():
+                logger.warning("ML worker already processing, skipping...")
+                return
+
+            # Start async detection
+            self.ml_worker.set_frame(frame.copy(), confidence_threshold=0.4)
+            self.ml_worker.start()
+
+        except Exception as e:
+            logger.error(f"Failed to start ML worker: {e}", exc_info=True)
+            self.status_label.setText(f"❌ ML error: {e}")
+
+    def _on_detection_complete(self, player_cards: List, board_cards: List):
+        """Handle detection results from worker thread (runs on main thread)"""
+        try:
+            if self.captured_frame is None:
+                return
+
+            # Draw overlay on captured frame
+            overlay_frame = self.captured_frame.copy()
+
             for detection in player_cards:
                 x1, y1, x2, y2 = detection.bbox
                 cv2.rectangle(overlay_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 cv2.putText(overlay_frame, f"P: {detection.classification}", (x1, y1-10),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-            
+
             for detection in board_cards:
                 x1, y1, x2, y2 = detection.bbox
                 cv2.rectangle(overlay_frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
                 cv2.putText(overlay_frame, f"B: {detection.classification}", (x1, y1-10),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-            
+
             self.display_frame(overlay_frame)
-            
+
+            # Fill card widgets
             if len(player_cards) >= 1:
                 self.card1_widget.set_text(player_cards[0].classification or "")
             if len(player_cards) >= 2:
                 self.card2_widget.set_text(player_cards[1].classification or "")
-            
+
             board_widgets = [self.flop1_widget, self.flop2_widget, self.flop3_widget,
                            self.turn_widget, self.river_widget]
-            
+
             for i, widget in enumerate(board_widgets):
                 if i < len(board_cards):
                     widget.set_text(board_cards[i].classification or "")
                 else:
                     widget.clear()
-            
+
             if len(player_cards) >= 2:
                 self.analyze_situation()
-                self.status_label.setText(
-                    f"✅ Detected: {len(player_cards)} player, {len(board_cards)} board cards"
-                )
-            else:
-                self.status_label.setText(
-                    f"⚠️ Found {len(player_cards)} player cards - Complete manually"
-                )
-        
+
+            self.status_label.setText(
+                f"✅ Detected: {len(player_cards)} player, {len(board_cards)} board cards"
+            )
+
         except Exception as e:
-            logger.error(f"Detection error: {e}", exc_info=True)
-            self.status_label.setText(f"❌ Detection error")
+            logger.error(f"Error processing detection results: {e}", exc_info=True)
+            self.status_label.setText(f"❌ Error: {e}")
+
+    def _on_detection_failed(self, error_message: str):
+        """Handle detection failure from worker thread"""
+        logger.error(f"ML detection failed: {error_message}")
+        self.status_label.setText(f"❌ Detection failed: {error_message}")
     
     def display_frame(self, frame: np.ndarray):
         try:
@@ -609,8 +650,8 @@ class MainWindow(QWidget):
             
             strategy_label = QLabel(f"🎯 {strategy}")
             strategy_label.setStyleSheet("""
-                font-size: 16px; color: #FFD700; padding: 15px; font-weight: bold; 
-                border: 2px solid #FFD700; border-radius: 8px; background-color: rgba(255, 215, 0, 0.1);
+                font-size: 14px; color: #FFF9CB; padding: 15px; font-weight: bold; 
+                border: 2px solid #FFD700; border-radius: 8px; background-color: rgba(180, 140, 0, 0.1);
             """)
             strategy_label.setWordWrap(True)
             recommendations_layout.addWidget(strategy_label)
@@ -663,7 +704,110 @@ class MainWindow(QWidget):
         self.create_default_analysis()
         self.status_label.setText("🔄 All inputs cleared")
         logger.info("All inputs cleared")
-    
+
+    def _on_hotkey_opponent_select(self, number: int):
+        """Handle numpad hotkey for opponent selection"""
+        logger.info(f"HANDLER: Setting {number} opponents via hotkey")
+        
+        try:
+            from core.domain import TableSize
+            
+            # Маппинг: количество оппонентов -> TableSize
+            opponents_to_table_size = {
+                1: TableSize.HEADS_UP,      # 1 оппонент
+                2: TableSize.THREE_MAX,     # 2 оппонента
+                3: TableSize.FOUR_MAX,      # 3 оппонента
+                4: TableSize.FIVE_MAX,      # 4 оппонента
+                5: TableSize.SIX_MAX,       # 5 оппонентов
+                6: TableSize.SEVEN_MAX,     # 6 оппонентов
+                7: TableSize.EIGHT_MAX,     # 7 оппонентов
+                8: TableSize.NINE_MAX,      # 8 оппонентов
+            }
+            
+            if number not in opponents_to_table_size:
+                logger.warning(f"HANDLER: Invalid opponent count: {number} (must be 1-8)")
+                return
+            
+            if hasattr(self, 'game_state'):
+                new_table_size = opponents_to_table_size[number]
+                old_table_size = self.game_state.table_size
+                
+                self.game_state.table_size = new_table_size
+                
+                logger.info(f"HANDLER: SUCCESS! Changed table_size: {old_table_size} -> {new_table_size}")
+                logger.info(f"HANDLER: Opponents: {self.game_state.get_opponents_count()}")
+                
+                # Обновляем UI - передаём table_size как аргумент
+                if hasattr(self, 'on_table_size_changed'):
+                    self.on_table_size_changed(new_table_size)
+                    logger.info("HANDLER: Called on_table_size_changed()")
+                
+                if hasattr(self, 'update_game_state_display'):
+                    self.update_game_state_display()
+                    logger.info("HANDLER: Called update_game_state_display()")
+                
+                # Если есть карты - пересчитываем анализ
+                if hasattr(self, 'has_player_cards') and self.has_player_cards():
+                    if hasattr(self, 'analyze_situation'):
+                        self.analyze_situation()
+                        logger.info("HANDLER: Called analyze_situation()")
+            else:
+                logger.error("HANDLER: game_state not found!")
+                
+        except Exception as e:
+            logger.error(f"HANDLER: Exception: {e}", exc_info=True)
+
+
+    def _on_hotkey_capture(self):
+        """Handle Enter hotkey for capture"""
+        logger.info("HANDLER: Capture hotkey pressed")
+        
+        try:
+            from PySide6.QtWidgets import QPushButton
+            
+            # Вариант 1: capture_action
+            if hasattr(self, 'capture_action'):
+                logger.info("HANDLER: Found capture_action")
+                self.capture_action.trigger()
+                logger.info("HANDLER: SUCCESS! capture_action triggered")
+                return
+            
+            # Вариант 2: capture_and_detect метод
+            if hasattr(self, 'capture_and_detect'):
+                logger.info("HANDLER: Found capture_and_detect method")
+                self.capture_and_detect()
+                logger.info("HANDLER: SUCCESS! capture_and_detect called")
+                return
+            
+            # Вариант 3: select_roi метод
+            if hasattr(self, 'select_roi'):
+                logger.info("HANDLER: Found select_roi method")
+                self.select_roi()
+                logger.info("HANDLER: SUCCESS! select_roi called")
+                return
+            
+            # Вариант 4: поиск кнопки
+            all_buttons = self.findChildren(QPushButton)
+            logger.info(f"HANDLER: Searching through {len(all_buttons)} buttons")
+            
+            for btn in all_buttons:
+                btn_text = btn.text().lower()
+                btn_name = btn.objectName().lower()
+                
+                if ('capture' in btn_text or 'capture' in btn_name or 
+                    'grab' in btn_text or 'screen' in btn_text):
+                    logger.info(f"HANDLER: Found button: '{btn.text()}' ({btn.objectName()})")
+                    if btn.isEnabled():
+                        btn.click()
+                        logger.info("HANDLER: SUCCESS! Button clicked")
+                        return
+            
+            logger.error("HANDLER: Could not trigger capture!")
+            
+        except Exception as e:
+            logger.error(f"HANDLER: Exception: {e}", exc_info=True)   
+
     def closeEvent(self, event):
         logger.info("Application closing")
         event.accept()
+

@@ -120,7 +120,7 @@ class HWIDGenerator:
             cls.get_bios_serial(),
             platform.machine(),
             platform.system(),
-            "qpkeo2k2ok2kmdkd2"  # Скрытый параметр из ТЗ
+            "qpkeo2k2ok2kmdk123PENISd2"
         ]
         
         # Объединяем и хешируем

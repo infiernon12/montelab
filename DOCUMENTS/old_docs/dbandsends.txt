@@ -1,0 +1,98 @@
+SELECT 
+    valid_until,
+    (valid_until > CURRENT_TIMESTAMP) as is_active
+FROM licenses 
+WHERE hwid = 'hwid_из_программы';
+
+
+запрос, есть ли у конкретного хвида подписка или нет и до какого числа и времени.
+
+
+INSERT INTO licenses (hwid, comment, valid_until) 
+VALUES ('hwid_пользователя', 'комментарий', CURRENT_TIMESTAMP + INTERVAL '1 month')
+
+добавление лицензии для НОВОГО юзера. 
+
+
+
+UPDATE licenses 
+SET valid_until = valid_until + INTERVAL '1 month',
+    updated_at = CURRENT_TIMESTAMP
+WHERE hwid = 'hwid_пользователя';
+
+
+продление подписки  по хвиду
+
+UPDATE licenses 
+SET valid_until = CURRENT_TIMESTAMP - INTERVAL '1 day',
+    updated_at = CURRENT_TIMESTAMP
+WHERE hwid = 'hwid_пользователя';
+
+офнуть подписку хвиду
+
+SELECT * FROM licenses 
+WHERE valid_until > CURRENT_TIMESTAMP
+ORDER BY valid_until DESC;
+
+получить ТОЛЬКО активные подписки
+
+SELECT * FROM licenses 
+WHERE valid_until <= CURRENT_TIMESTAMP
+ORDER BY valid_until DESC;
+
+получить ТОЛЬКО неактивные подписки
+
+DELETE FROM licenses 
+WHERE hwid = 'hwid_пользователя';
+
+удалить все данные о хвиде
+
+SELECT * FROM licenses 
+WHERE comment ILIKE '%имя_пользователя%';
+
+Ищет по комменту - *пожалуй да, лучше юзать это после как "логин" и при покупке челом лицензии*
+
+UPDATE licenses 
+SET comment = 'новый комментарий',
+    updated_at = CURRENT_TIMESTAMP
+WHERE hwid = 'hwid_пользователя';
+
+Обновляет комментарий по хвиду 
+
+UPDATE licenses 
+SET 
+    hwid = 'новый_hwid',
+    hwid_updated = CURRENT_TIMESTAMP,
+    updated_at = CURRENT_TIMESTAMP
+WHERE comment = 'точный_комментарий';
+
+Обновляет хвид по комментарию 
+
+
+
+
+ 
+Поле комменты сделал уникальным. Оно МОЖЕТ БЫТЬ пустым
+То есть двух John быть не может. Это поле мы обязаны юзать для понимания и возможности поддержки юзера.
+это костыль для личного кабинета.
+use case^ чел купит на год софт, поюзал месяц, но надо было уехать, пересобрал комп, но вдруг вспомнил, что у него есть софт. захотел поюзать, а как бля, хвид-то не подходит. 
+он пишет в поддержку, где мы просим чек перевода и юзернейм, который он обязан был сохранить
+
+
+
+CREATE TABLE IF NOT EXISTS licenses (
+    id SERIAL PRIMARY KEY,
+    hwid TEXT UNIQUE NOT NULL,
+    comment TEXT,
+    valid_until TIMESTAMP NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    hwid_updated TIMESTAMP
+);
+
+CREATE UNIQUE INDEX unique_non_null_comment ON licenses (comment) WHERE comment IS NOT NULL;
+
+
+это код для создания такой же таблицы
+
+Postgres 17

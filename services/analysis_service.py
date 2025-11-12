@@ -1,4 +1,4 @@
-"""Analysis Service - Orchestrates poker analysis"""
+"""Analysis Service - Orchestrates poker analysis with improved recommendations"""
 from typing import Dict, List
 import logging
 from core.domain import Card, GameState, GameStage
@@ -8,13 +8,24 @@ logger = logging.getLogger(__name__)
 
 
 class AnalysisService:
-    """High-level poker analysis orchestration"""
+    """High-level poker analysis orchestration with improved ABC recommendations"""
     
     def __init__(self, equity_calculator: EquityCalculator):
         self.hand_evaluator = HandEvaluator()
         self.board_analyzer = BoardAnalyzer()
         self.outs_calculator = OutsCalculator()
         self.equity_calculator = equity_calculator
+        
+        # Import recommendation engine
+        try:
+            from services.improved_abc_recommendations import ImprovedRecommendationEngine
+            self.recommendation_engine = ImprovedRecommendationEngine()
+            self.use_improved_recommendations = True
+            logger.info("Loaded improved recommendation engine")
+        except ImportError:
+            logger.warning("Improved recommendation engine not found, using basic recommendations")
+            self.recommendation_engine = None
+            self.use_improved_recommendations = False
     
     def analyze_hand(self, game_state: GameState) -> Dict[str, any]:
         """Comprehensive hand analysis"""
@@ -77,10 +88,21 @@ class AnalysisService:
                 logger.error(f"Equity calculation failed: {e}")
                 equity_data = {"error": str(e)}
         
-        # Strategic recommendation
-        strategy = self._generate_strategy(
-            current_hand, total_outs, equity_data, texture_analysis, len(game_state.board_cards)
-        )
+        # Strategic recommendation - NEW IMPROVED VERSION
+        if self.use_improved_recommendations and self.recommendation_engine:
+            strategy = self._generate_improved_strategy(
+                current_hand=current_hand,
+                equity_data=equity_data,
+                outs_data=outs_data,
+                total_outs=total_outs,
+                texture_analysis=texture_analysis,
+                game_state=game_state
+            )
+        else:
+            # Fallback to basic strategy
+            strategy = self._generate_basic_strategy(
+                current_hand, total_outs, equity_data, texture_analysis, len(game_state.board_cards)
+            )
         
         return {
             "stage": game_state.stage.value,
@@ -91,13 +113,56 @@ class AnalysisService:
             "total_outs": total_outs,
             "board_texture": texture_analysis,
             "equity": equity_data,
-            "strategy_recommendation": strategy
+            "strategy_recommendation": strategy,
+            # Additional data for improved recommendations
+            "num_opponents": game_state.get_opponents_count(),
+            "board_cards_list": game_state.board_cards
         }
     
-    def _generate_strategy(self, current_hand: str, total_outs: int, 
-                          equity_data: Dict, texture_analysis: Dict, 
-                          board_cards_count: int) -> str:
-        """Generate ABC strategy recommendation"""
+    def _generate_improved_strategy(
+        self,
+        current_hand: str,
+        equity_data: Dict,
+        outs_data: Dict,
+        total_outs: int,
+        texture_analysis: Dict,
+        game_state: GameState
+    ) -> str:
+        """Generate improved strategic recommendation"""
+        
+        try:
+            win_rate = equity_data.get('win_rate', 0)
+            
+            recommendation = self.recommendation_engine.generate_recommendation(
+                current_hand=current_hand,
+                win_rate=win_rate,
+                total_outs=total_outs,
+                outs_breakdown=outs_data,
+                texture_analysis=texture_analysis,
+                num_opponents=game_state.get_opponents_count(),
+                stage=game_state.stage,
+                board_cards=game_state.board_cards
+            )
+            
+            return recommendation
+            
+        except Exception as e:
+            logger.error(f"Improved recommendation generation failed: {e}")
+            # Fallback to basic
+            return self._generate_basic_strategy(
+                current_hand, total_outs, equity_data, 
+                texture_analysis, len(game_state.board_cards)
+            )
+    
+    def _generate_basic_strategy(
+        self, 
+        current_hand: str, 
+        total_outs: int, 
+        equity_data: Dict, 
+        texture_analysis: Dict, 
+        board_cards_count: int
+    ) -> str:
+        """Basic ABC strategy recommendation (fallback)"""
         
         strong_hands = ['four of a kind', 'full house', 'flush', 'straight', 'three of a kind']
         medium_hands = ['two pair', 'one pair']
@@ -124,10 +189,10 @@ class AnalysisService:
         elif total_outs >= 8:
             return "⚡ ХОРОШЕЕ ДРО - Полу-блеф или колл"
         elif total_outs >= 4:
-            return "🤏 СЛАБОЕ ДРО - Коллируйте дешево"
+            return "🤞 СЛАБОЕ ДРО - Коллируйте дешево"
         
         # Weak hands
         if board_cards_count == 5:
             return "❌ СЛАБАЯ РУКА - Скорее всего ФОЛД к ставкам"
         else:
-            return "😐 СЛАБАЯ ПОЗИЦИЯ - Чек или фолд к агрессии"
+            return "😕 СЛАБАЯ ПОЗИЦИЯ - Чек или фолд к агрессии"

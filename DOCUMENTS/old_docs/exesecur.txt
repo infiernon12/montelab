@@ -1,0 +1,127 @@
+Техническое задание: Механизм защиты EXE-файла клиентского приложения
+1. Общие положения
+Разработать многоуровневую систему защиты исполняемого файла клиентского приложения, направленную на максимальное усложнение реверс-инжиниринга и несанкционированного использования.
+
+2. Требования к обфускации кода
+2.1. Статическая обфускация
+Запутывание контрольного графа: Разрыв линейных участков кода, добавление ложных ветвлений
+
+Преобразование данных: Шифрование строковых констант, преобразование целочисленных констант
+
+Переименование идентификаторов: Замена осмысленных имен на случайные последовательности
+
+Добавление мусорного кода: Вставка неисполняемых инструкций и ложных алгоритмов
+
+2.2. Динамическая обфускация
+Самомодифицирующийся код: Изменение sections кода во время выполнения
+
+Runtime-расшифровка: Дешифровка критичных участков кода только в момент выполнения
+
+Полиморфные алгоритмы: Изменение алгоритмов защиты между разными версиями приложения
+
+3. Анти-отладочные механизмы
+3.1. Детект отладки
+
+cpp
+// Обязательные проверки
+IsDebuggerPresent();
+CheckRemoteDebuggerPresent();
+NtQueryInformationProcess(); // ProcessDebugPort
+PEB.BeingDebugged flag
+NtGlobalFlag checks
+
+
+3.2. Детект эмуляции
+Анализ временных задержек: Detection timing attacks
+
+Проверка виртуального окружения: VM detection (VMware, VirtualBox, Hyper-V)
+
+Анализ аппаратных особенностей: CPU features, memory timing
+
+3.3. Противодействие дампингу
+Анти-дампинг: Блокировка создания дампов процесса
+
+Защита от патчинга в памяти: Checksum verification of critical sections
+
+Детект инжекта: Monitoring of foreign DLLs injection
+
+4. Защита криптографических материалов
+4.1. Хранение секретных ключей
+Разделение ключа: Хранение в зашифрованном виде в разных sections
+
+Runtime-восстановление: Сборка ключа только в процессе выполнения
+
+White-box криптография: Implementation of cryptographic algorithms resistant to static analysis
+
+4.2. Ключи для API коммуникации
+cpp
+// Пример структуры защиты API ключа
+struct ProtectedKey {
+    uint8_t encrypted_key[32];
+    uint8_t iv[16];
+    uint8_t checksum[32];
+};
+5. Механизмы контроля целостности
+5.1. Проверка целостности файла
+CRC32/MD5 проверки: Sections integrity verification
+
+Digital signatures: Проверка цифровой подписи исполняемого файла
+
+Self-checksumming: Регулярная проверка контрольных сумм during execution
+
+5.2. Защита от модификации
+Code signing verification: Проверка подписи во время выполнения
+
+Section permissions: Установка правильных прав доступа на sections
+
+Memory protection: Запрет на модификацию исполняемых regions
+
+6. Защита сетевого взаимодействия
+6.1. SSL/TLS hardening
+Certificate pinning: Фиксация TLS сертификата сервера
+
+Strong ciphers: Только разрешенные шифры (TLS 1.2+, AEAD ciphers)
+
+Certificate validation: Полная валидация цепочки сертификатов
+
+6.2. Защита API запросов
+Request signing: HMAC-SHA256 подпись всех запросов
+
+Timestamp validation: Защита от replay attacks
+
+Nonce usage: Уникальные значения для каждого запроса
+
+
+
+9. Этапы внедрения защиты
+9.1. Фаза 1: Базовая защита
+Статическая обфускация кода
+
+Базовые анти-отладочные проверки
+
+SSL pinning и валидация сертификатов
+
+9.2. Фаза 2: Продвинутая защита
+Динамическая обфускация
+
+Advanced anti-debug techniques
+
+Integrity verification mechanisms
+
+9.3. Фаза 3: Активная защита
+Behavior analysis
+
+Self-protection mechanisms
+
+Silent reporting system
+
+
+11. Инструменты и технологии
+11.1. Рекомендуемые инструменты
+Обфускация: VMProtect, Themida, Obfuscator-LLVM
+
+Анти-отладка: Custom implementations
+
+Code signing: Signtool, DigiCert
+
+Monitoring: Custom solution with encrypted reporting

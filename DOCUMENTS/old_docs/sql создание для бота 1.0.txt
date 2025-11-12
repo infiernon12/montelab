@@ -1,0 +1,103 @@
+CREATE SEQUENCE admin_log_id_seq
+    AS integer START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
+
+CREATE SEQUENCE licenses_id_seq
+    AS integer START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
+
+CREATE SEQUENCE merchants_id_seq
+    AS integer START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
+
+CREATE SEQUENCE payments_id_seq
+    AS integer START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
+
+CREATE SEQUENCE program_id_seq
+    AS integer START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
+
+CREATE SEQUENCE subscription_options_id_seq
+    AS integer START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
+
+
+CREATE TABLE admin_log (
+    id integer NOT NULL DEFAULT nextval('admin_log_id_seq'::regclass),
+    admin_id bigint,
+    user_id bigint,
+    old_value integer,
+    new_value integer,
+    created_at timestamp without time zone DEFAULT now(),
+    CONSTRAINT admin_log_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE licenses (
+    id integer NOT NULL DEFAULT nextval('licenses_id_seq'::regclass),
+    tg_id bigint,
+    program_id integer,
+    hwid text,
+    valid_until timestamp without time zone,
+    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    hwid_updated timestamp without time zone,
+    option_id integer,
+    CONSTRAINT licenses_pkey PRIMARY KEY (id),
+    CONSTRAINT licenses_option_id_fkey FOREIGN KEY (option_id) REFERENCES subscription_options(id),
+    CONSTRAINT licenses_program_id_fkey FOREIGN KEY (program_id) REFERENCES program(id) ON DELETE CASCADE,
+    CONSTRAINT licenses_tg_id_fkey FOREIGN KEY (tg_id) REFERENCES tg(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX unique_non_null_hwid ON licenses (hwid) WHERE (hwid IS NOT NULL);
+
+CREATE TABLE merchants (
+    id integer NOT NULL DEFAULT nextval('merchants_id_seq'::regclass),
+    name text NOT NULL,
+    description text,
+    CONSTRAINT merchants_pkey PRIMARY KEY (id)
+);
+
+CREATE TABLE payments (
+    id integer NOT NULL DEFAULT nextval('payments_id_seq'::regclass),
+    user_id bigint NOT NULL,
+    amount integer NOT NULL,
+    status character varying(32) NOT NULL,
+    currency character varying(16),
+    payment_id text,
+    pay_url text,
+    created_at timestamp without time zone DEFAULT now(),
+    merchant_id integer,
+    CONSTRAINT payments_pkey PRIMARY KEY (id),
+    CONSTRAINT payments_payment_id_unique UNIQUE (payment_id),
+    CONSTRAINT payments_merchant_id_fkey FOREIGN KEY (merchant_id) REFERENCES merchants(id)
+);
+
+CREATE TABLE program (
+    id integer NOT NULL DEFAULT nextval('program_id_seq'::regclass),
+    name text NOT NULL,
+    description text,
+    CONSTRAINT program_pkey PRIMARY KEY (id),
+    CONSTRAINT program_name_key UNIQUE (name)
+);
+
+CREATE TABLE subscription_options (
+    id integer NOT NULL DEFAULT nextval('subscription_options_id_seq'::regclass),
+    name character varying,
+    days integer,
+    price integer,
+    program_id integer,
+    CONSTRAINT subscription_options_pkey PRIMARY KEY (id),
+    CONSTRAINT subscription_options_program_id_fkey FOREIGN KEY (program_id) REFERENCES program(id)
+);
+
+CREATE TABLE tg (
+    id bigint NOT NULL,
+    balance numeric DEFAULT 0,
+    lang text DEFAULT 'ru',
+    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    status character varying(16) DEFAULT 'active',
+    CONSTRAINT tg_pkey PRIMARY KEY (id)
+);
+
+ALTER SEQUENCE admin_log_id_seq OWNED BY admin_log.id;
+ALTER SEQUENCE licenses_id_seq OWNED BY licenses.id;
+ALTER SEQUENCE merchants_id_seq OWNED BY merchants.id;
+ALTER SEQUENCE payments_id_seq OWNED BY payments.id;
+ALTER SEQUENCE program_id_seq OWNED BY program.id;
+ALTER SEQUENCE subscription_options_id_seq OWNED BY subscription_options.id;

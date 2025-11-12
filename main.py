@@ -23,9 +23,9 @@ def check_license(app):
         logger.info(f"Generated HWID: {hwid}")
         
         # Initialize license client
-        hmac_secret = "super-secure-hmac-key-for-production-change-this-immediately"
+        hmac_secret = "28de6a1eb3b9e9edb29c886a43d71964935bd12cb981cc2e604381076d73f6660fdca0a6092ee4b055882859563e7c373472d01d28d0e91cefa810bc1106c572"
         license_client = LicenseClient(
-            api_base_url="https://85.239.147.227/api/v1/",
+            api_base_url="https://185.221.196.69:8000/api/v1",
             hmac_secret_key=hmac_secret,
             hwid=hwid
         )
@@ -85,8 +85,20 @@ def main():
         script_dir = Path(__file__).parent
         yolo_path = script_dir / "models" / "board_player_detector_v4.pt"
         resnet_path = script_dir / "models" / "fine_tuned_resnet_cards_240EPOCH.pt"
-        
-        ml_service = MLService.from_weights(str(yolo_path), str(resnet_path), "cpu")
+
+        # Auto-detect GPU with fallback to CPU
+        import torch
+        if torch.cuda.is_available():
+            device = "cuda"
+            logger.info(f"✅ GPU detected: {torch.cuda.get_device_name(0)}")
+            # Enable CUDA optimizations
+            torch.backends.cudnn.benchmark = True
+            torch.backends.cudnn.enabled = True
+        else:
+            device = "cpu"
+            logger.info("⚠️  GPU not available, using CPU")
+
+        ml_service = MLService.from_weights(str(yolo_path), str(resnet_path), device)
         
         # Initialize Monte Carlo backend
         try:

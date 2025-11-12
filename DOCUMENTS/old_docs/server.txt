@@ -1,0 +1,499 @@
+/PoRTA_2/
+|-- license-api
+|   |-- .env
+|   |-- auth.py             # ✅ HMAC-SHA256 аутентификация + валидация timestamp/nonce
+|   |-- config.py           # ✅ Конфигурация (БД, HMAC ключи, переменные окружения)
+|   |-- database.py         # ✅ Менеджер БД PostgreSQL + SQL запросы лицензий
+|   |-- main.py             # ✅ Точка входа FastAPI сервера с CORS и middleware
+|   |-- models.py           # ✅ Pydantic модели для API (Request/Response схемы)
+|   |-- test_api.py         # ✅ Тесты API endpoints с HMAC подписями
+|   |-- routers
+|   |   |-- license.py      # ✅ REST endpoints: /license/check, /license/info + rate limiting
+
+=====================================
+.env
+
+# Database Configuration
+DB_HOST=localhost
+DB_NAME=postgres
+DB_USER=api_user
+DB_PASSWORD=pjBHEw3wTQsP
+
+# HMAC Secret Key
+HMAC_SECRET_KEY=super-secure-hmac-key-for-production-change-this-immediately
+
+# API Configuration  
+API_V1_STR=/api/v1
+RATE_LIMIT_REQUESTS=60
+TIMESTAMP_TOLERANCE=180
+====================================
+auth.py
+
+import hmac
+import hashlib
+import time
+from typing import Optional
+from fastapi import HTTPException, Request
+from config import settings
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Хранилище для nonce (в production использовать Redis)
+used_nonces = set()
+
+def generate_hmac_signature(data: str, secret_key: str) -> str:
+    """Генерация HMAC-SHA256 подписи"""
+    return hmac.new(
+        secret_key.encode('utf-8'),
+        data.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+
+def verify_hmac_signature(data: str, signature: str, secret_key: str) -> bool:
+    """Проверка HMAC-SHA256 подписи"""
+    expected_signature = generate_hmac_signature(data, secret_key)
+    return hmac.compare_digest(expected_signature, signature)
+
+def validate_timestamp(timestamp: int) -> bool:
+    """Проверка свежести timestamp (±3 минуты)"""
+    current_time = int(time.time())
+    return abs(current_time - timestamp) <= settings.TIMESTAMP_TOLERANCE
+
+def validate_nonce(nonce: str) -> bool:
+    """Проверка уникальности nonce для предотвращения replay-атак"""
+    if nonce in used_nonces:
+        return False
+    used_nonces.add(nonce)
+    return True
+
+async def verify_request_signature(request: Request, body: bytes) -> bool:
+    """Проверка подписи запроса согласно ТЗ"""
+    signature = request.headers.get("X-Signature")
+    if not signature:
+        raise HTTPException(status_code=401, detail="Missing X-Signature header")
+    
+    body_str = body.decode('utf-8')
+    if not verify_hmac_signature(body_str, signature, settings.HMAC_SECRET_KEY):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+    
+    return True
+=========================================
+test_api.py
+
+import requests
+import json
+import time
+import hmac
+import hashlib
+import random
+import string
+
+# Настройки (должны совпадать с .env)
+API_BASE_URL = "http://localhost:8000/api/v1"
+HMAC_SECRET_KEY = "super-secure-hmac-key-for-production-change-this-immediately"  # Из твоего .env
+
+def generate_hmac_signature(data: str, secret_key: str) -> str:
+    """Генерация HMAC-SHA256 подписи"""
+    return hmac.new(
+        secret_key.encode('utf-8'),
+        data.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+
+def generate_nonce(length=8):
+    """Генерация случайного nonce"""
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+
+def test_license_check():
+    """Тест endpoint /license/check"""
+    print("Тестируем /license/check...")
+    
+    # Подготовка данных
+    request_data = {
+        "hwid": "test_hwid_123456",  # Тот же HWID, что добавляли в БД
+        "timestamp": int(time.time()),
+        "nonce": generate_nonce()
+    }
+    
+    # Преобразуем в JSON строку
+    json_data = json.dumps(request_data)
+    
+    # Генерируем HMAC подпись
+    signature = generate_hmac_signature(json_data, HMAC_SECRET_KEY)
+    
+    # Отправляем запрос
+    headers = {
+        "Content-Type": "application/json",
+        "X-Signature": signature
+    }
+    
+    print(f"Request data: {json_data}")
+    print(f"Signature: {signature}")
+    
+    response = requests.post(
+        f"{API_BASE_URL}/license/check",
+        data=json_data,
+        headers=headers
+    )
+    
+    print(f"Status Code: {response.status_code}")
+    print(f"Response text: {response.text}")
+    
+    if response.status_code == 200:
+        try:
+            print(f"Response JSON: {response.json()}")
+        except:
+            print("Failed to parse JSON")
+    print("-" * 50)
+
+
+def test_license_info():
+    """Тест endpoint /license/info"""
+    print("Тестируем /license/info...")
+    
+    request_data = {
+        "hwid": "test_hwid_123456",
+        "timestamp": int(time.time()),
+        "nonce": generate_nonce()
+    }
+    
+    json_data = json.dumps(request_data)
+    signature = generate_hmac_signature(json_data, HMAC_SECRET_KEY)
+    
+    headers = {
+        "Content-Type": "application/json",
+        "X-Signature": signature
+    }
+    
+    response = requests.post(
+        f"{API_BASE_URL}/license/info",
+        data=json_data,
+        headers=headers
+    )
+    
+    print(f"Status Code: {response.status_code}")
+    print(f"Response: {response.json()}")
+    print("-" * 50)
+
+def test_nonexistent_license():
+    """Тест с несуществующим HWID"""
+    print("Тестируем несуществующую лицензию...")
+    
+    request_data = {
+        "hwid": "nonexistent_hwid_999",
+        "timestamp": int(time.time()),
+        "nonce": generate_nonce()
+    }
+    
+    json_data = json.dumps(request_data)
+    signature = generate_hmac_signature(json_data, HMAC_SECRET_KEY)
+    
+    headers = {
+        "Content-Type": "application/json",
+        "X-Signature": signature
+    }
+    
+    response = requests.post(
+        f"{API_BASE_URL}/license/check",
+        data=json_data,
+        headers=headers
+    )
+    
+    print(f"Status Code: {response.status_code}")
+    print(f"Response: {response.json()}")
+    print("-" * 50)
+
+if __name__ == "__main__":
+    print("Начинаем тестирование API...")
+    test_license_check()
+    test_license_info()
+    test_nonexistent_license()
+    print("Тестирование завершено!")
+====================================
+models.py
+
+from pydantic import BaseModel, Field
+from typing import Optional
+from datetime import datetime
+
+class LicenseCheckRequest(BaseModel):
+    hwid: str = Field(..., description="Hardware ID string")
+    timestamp: int = Field(..., description="UNIX timestamp")
+    nonce: str = Field(..., min_length=6, max_length=12, description="Unique nonce string (6-12 chars)")
+
+class LicenseCheckResponse(BaseModel):
+    is_active: bool
+    valid_until: Optional[str] = None  # ISO 8601 format
+    signature: str
+    timestamp: int
+
+class LicenseInfoRequest(BaseModel):
+    hwid: str = Field(..., description="Hardware ID string")
+    timestamp: int = Field(..., description="UNIX timestamp")
+    nonce: str = Field(..., min_length=6, max_length=12, description="Unique nonce string (6-12 chars)")
+
+class LicenseInfoResponse(BaseModel):
+    is_active: bool
+    valid_until: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    comment: Optional[str] = None
+    signature: str
+    timestamp: int
+=================================
+main.py
+
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+import logging
+from config import settings
+from routers import license
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Создание FastAPI приложения
+app = FastAPI(
+    title="License Management API",
+    description="API для управления лицензиями",
+    version="1.0.0"
+)
+
+# CORS (настрой под свои нужды)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # В production укажи конкретные домены
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Подключение роутеров
+app.include_router(
+    license.router,
+    prefix=settings.API_V1_STR,
+    dependencies=[]
+)
+
+@app.get("/")
+async def root():
+    return {"message": "License Management API is running"}
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+===================================
+database.py
+
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from config import settings
+from typing import Optional, Dict, Any
+import logging
+
+logger = logging.getLogger(__name__)
+
+class DatabaseManager:
+    def __init__(self):
+        self.connection_params = {
+            'host': settings.DB_HOST,
+            'database': settings.DB_NAME,
+            'user': settings.DB_USER,
+            'password': settings.DB_PASSWORD
+        }
+    
+    def get_connection(self):
+        try:
+            conn = psycopg2.connect(**self.connection_params)
+            return conn
+        except Exception as e:
+            logger.error(f"Database connection error: {e}")
+            raise
+    
+    def check_license_by_hwid(self, hwid: str) -> Optional[Dict[Any, Any]]:
+        """Проверка лицензии по HWID согласно ТЗ"""
+        with self.get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    SELECT 
+                        valid_until,
+                        (valid_until > CURRENT_TIMESTAMP) as is_active
+                    FROM licenses 
+                    WHERE hwid = %s
+                """, (hwid,))
+                result = cursor.fetchone()
+                return dict(result) if result else None
+
+    def get_license_info(self, hwid: str) -> Optional[Dict[Any, Any]]:
+        """Получение подробной информации о лицензии"""
+        with self.get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    SELECT 
+                        valid_until,
+                        created_at,
+                        updated_at,
+                        comment,
+                        (valid_until > CURRENT_TIMESTAMP) as is_active
+                    FROM licenses 
+                    WHERE hwid = %s
+                """, (hwid,))
+                result = cursor.fetchone()
+                return dict(result) if result else None
+
+db_manager = DatabaseManager()
+======================================
+config.py
+
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+class Settings:
+    # Database
+    DB_HOST: str = os.getenv("DB_HOST", "localhost")
+    DB_NAME: str = os.getenv("DB_NAME", "postgres")
+    DB_USER: str = os.getenv("DB_USER", "api_user")
+    DB_PASSWORD: str = os.getenv("DB_PASSWORD")
+    
+    @property
+    def DATABASE_URL(self) -> str:
+        return f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}/{self.DB_NAME}"
+    
+    # HMAC Secret Key
+    HMAC_SECRET_KEY: str = os.getenv("HMAC_SECRET_KEY")
+    
+    # API Settings
+    API_V1_STR: str = os.getenv("API_V1_STR", "/api/v1")
+    
+    # Rate Limiting
+    RATE_LIMIT_REQUESTS: int = int(os.getenv("RATE_LIMIT_REQUESTS", "60"))
+    
+    # Security
+    TIMESTAMP_TOLERANCE: int = int(os.getenv("TIMESTAMP_TOLERANCE", "180"))
+
+settings = Settings()
+
+# Проверяем, что критичные переменные установлены
+if not settings.DB_PASSWORD:
+    raise ValueError("DB_PASSWORD must be set in environment variables")
+if not settings.HMAC_SECRET_KEY:
+    raise ValueError("HMAC_SECRET_KEY must be set in environment variables")
+==================================
+license.py
+
+from fastapi import APIRouter, HTTPException, Request, Depends
+from datetime import datetime
+import json
+import time
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from models import LicenseCheckRequest, LicenseCheckResponse, LicenseInfoRequest, LicenseInfoResponse
+from database import db_manager
+from auth import verify_request_signature, validate_timestamp, validate_nonce, generate_hmac_signature
+from config import settings
+
+# Rate limiter для этого роутера
+limiter = Limiter(key_func=get_remote_address)
+
+router = APIRouter(prefix="/license", tags=["license"])
+
+async def get_request_body(request: Request):
+    """Получаем тело запроса для проверки HMAC"""
+    body = await request.body()
+    return body
+
+@router.post("/check", response_model=LicenseCheckResponse)
+@limiter.limit(f"{settings.RATE_LIMIT_REQUESTS}/minute")
+async def check_license(
+    request: Request,
+    license_request: LicenseCheckRequest,
+    body: bytes = Depends(get_request_body)
+):
+    """Проверка лицензии по HWID согласно ТЗ"""
+    
+    # Проверяем HMAC подпись
+    await verify_request_signature(request, body)
+    
+    # Проверяем свежесть timestamp
+    if not validate_timestamp(license_request.timestamp):
+        raise HTTPException(status_code=400, detail="Invalid timestamp")
+    
+    # Проверяем уникальность nonce
+    if not validate_nonce(license_request.nonce):
+        raise HTTPException(status_code=400, detail="Nonce already used")
+    
+    # Проверяем лицензию в БД
+    license_data = db_manager.check_license_by_hwid(license_request.hwid)
+    
+    if not license_data:
+        # Лицензия не найдена
+        response_data = {
+            "is_active": False,
+            "valid_until": None,
+            "timestamp": int(time.time())
+        }
+    else:
+        # Форматируем дату в ISO 8601
+        valid_until_iso = license_data['valid_until'].isoformat() + 'Z' if license_data['valid_until'] else None
+        
+        response_data = {
+            "is_active": license_data['is_active'],
+            "valid_until": valid_until_iso,
+            "timestamp": int(time.time())
+        }
+    
+    # Генерируем подпись ответа
+    response_json = json.dumps(response_data, sort_keys=True)
+    signature = generate_hmac_signature(response_json, settings.HMAC_SECRET_KEY)
+    response_data["signature"] = signature
+    
+    return LicenseCheckResponse(**response_data)
+
+@router.post("/info", response_model=LicenseInfoResponse)
+@limiter.limit(f"{settings.RATE_LIMIT_REQUESTS}/minute")
+async def get_license_info(
+    request: Request,
+    license_request: LicenseInfoRequest,
+    body: bytes = Depends(get_request_body)
+):
+    """Получение детальной информации о лицензии согласно ТЗ"""
+    
+    # Аналогичная проверка безопасности
+    await verify_request_signature(request, body)
+    
+    if not validate_timestamp(license_request.timestamp):
+        raise HTTPException(status_code=400, detail="Invalid timestamp")
+    
+    if not validate_nonce(license_request.nonce):
+        raise HTTPException(status_code=400, detail="Nonce already used")
+    
+    # Получаем подробную информацию о лицензии
+    license_data = db_manager.get_license_info(license_request.hwid)
+    
+    if not license_data:
+        raise HTTPException(status_code=404, detail="License not found")
+    
+    # Форматируем все даты в ISO 8601
+    response_data = {
+        "is_active": license_data['is_active'],
+        "valid_until": license_data['valid_until'].isoformat() + 'Z' if license_data['valid_until'] else None,
+        "created_at": license_data['created_at'].isoformat() + 'Z' if license_data['created_at'] else None,
+        "updated_at": license_data['updated_at'].isoformat() + 'Z' if license_data['updated_at'] else None,
+        "comment": license_data.get('comment'),
+        "timestamp": int(time.time())
+    }
+    
+    # Генерируем подпись ответа
+    response_json = json.dumps(response_data, sort_keys=True)
+    signature = generate_hmac_signature(response_json, settings.HMAC_SECRET_KEY)
+    response_data["signature"] = signature
+    
+    return LicenseInfoResponse(**response_data)

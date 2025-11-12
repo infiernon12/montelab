@@ -1,0 +1,702 @@
+tools.h
+//
+// Created by Victor on 5/21/20.
+//
+
+#ifndef TOOLS_H
+#define TOOLS_H
+#include <string>
+#include <vector>
+
+using namespace std;
+
+void print(vector<int> const &input);
+void print_score(int score);
+void write_vect(vector<int> vect, string name);
+vector<int> read_vect(const char *name);
+
+#endif
+
+=======================
+tools.cpp
+
+//
+// Created by Victor on 5/21/20.
+//
+
+#include "tools.h"
+#include <vector>
+#include <iostream>
+#include <fstream>
+#include <iterator>
+
+using namespace std;
+
+void print(vector<int> const &input) {
+std::copy(input.begin(),
+        input.end(),
+        std::ostream_iterator<int>(std::cout, " "));
+}
+
+ifstream::pos_type filesize(const char* filename)
+{
+    ifstream in(filename, std::ifstream::ate | std::ifstream::binary);
+    ifstream::pos_type ret =  in.tellg();
+    return ret;
+}
+
+void write_vect(vector<int> vect, string name){
+    fstream f;
+    int* arr = &vect[0];
+    f.open(name, ios::out|ios::binary);
+    if (f){
+        f.write(reinterpret_cast<char*>(arr), vect.size() * 4);
+        f.close();
+    } else {
+        cout << "Error" << endl;
+    }
+}
+
+vector<int> read_vect(const char *name){
+    fstream f;
+    string loc = name;
+    f.open(loc, ios::in|ios::binary);
+    int fsize = filesize(loc.c_str());
+    vector<int> vect(fsize/4);
+    int* arr = &vect[0];
+    if(f){
+        f.read(reinterpret_cast<char*>(arr), fsize);
+        f.close();
+    }
+    return vect;
+}
+
+===============================
+test.cpp
+#include "simulator.h"
+#include <iostream>
+#include <vector>
+#include <chrono>
+
+int main() {
+    // Загружаем симулятор
+    Simulator sim;
+    
+    // Задаем известные руки игроков
+    std::vector<std::vector<std::string>> known_hands = {
+        {"Ad", "Kh"},  // Туз пик, Король черв
+        {"2c", "7d"}   // Двойка треф, Семерка бубен
+    };
+    
+    // Задаем карты на столе (от 0 до 5 карт)
+    std::vector<std::string> comm_hand = {"9c"}; // Девятка треф
+    
+    // Количество симуляций Монте-Карло
+    int N = 100000;
+    
+    // Запускаем симуляцию (последний параметр - количество случайных противников)
+    auto start = std::chrono::high_resolution_clock::now();
+    
+    std::vector<std::vector<int>> results = sim.compute_probabilities(N, comm_hand, known_hands, 3);
+    
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    
+    std::cout << "Время выполнения: " << duration.count() << "ms" << std::endl;
+    
+    return 0;
+}
+
+=======================
+tables.h
+
+//
+// Created by Victor on 5/21/20.
+//
+
+#ifndef TABLES_H
+#define TABLES_H
+#include <vector>
+using namespace std;
+
+int evaluate(const vector<int> &hand1);
+vector<int> gen_lookup_table();
+int to_key(const vector<int> &hand);
+int to_ckey(const vector<int> & c_table, const vector<int> &hand);
+
+#endif
+
+===========================
+tables.cpp
+
+//
+// Created by Victor on 5/21/20.
+//
+
+#include "tables.h"
+#include "tools.h"
+#include "cards.h"
+#include <algorithm> 
+#include <vector>
+#include <iostream>
+using namespace std;
+
+bool replace(vector<int> &arr1, vector<int> &arr2) {
+    return arr1[0] < arr2[0] || (arr1[0] == arr2[0] && arr1[1] <= arr2[1]);
+}
+
+vector<vector<int>> retrieve_top(const vector<int> &hand){
+    vector<vector<int>> top2(2, vector<int>(2));
+    int prev = 0;
+
+    for (int i = 1; i < hand.size(); ++i) {
+        if (hand[i] != hand[i-1]) {
+            vector<int> arr = {i - prev, hand[i - 1]};
+            if (replace(top2[0], arr)) {
+                top2[1] = top2[0];
+                top2[0] = arr;
+            } else if (replace(top2[1], arr)) {
+                top2[1] = arr;
+            }
+            prev = i;
+        }
+    }
+    return top2;
+}
+
+int numerize_top(const vector<vector<int>> &top2){
+    int a = top2[0][0];
+    int b = top2[1][0];
+
+    int m = 0;
+    if (a == 4) {
+        m = 7;
+    } else if (a == 3) {
+        if (b == 2) {
+            m = 6;
+        } else {
+            m = 3;
+        }
+    } else if (a == 2) {
+        if (b == 2) {
+            m = 2;
+        } else {
+            m = 1;
+        }
+    }
+
+    return m * 13 * 13 + top2[0][1] * 13 + ((m == 2 || m == 6) ? top2[1][1] : 0);
+}
+
+int numerize_global(const vector<int> &hand, const vector<int> &suit){
+    bool is_flush = true; bool is_straight = true;
+
+    for (int i = 1; i < hand.size(); ++i) {
+        is_straight &= (hand[i-1] + 1 == hand[i]);
+        is_flush &= (suit[i-1] == suit[i]);
+    }
+
+    int m = 0;
+    if(is_straight && is_flush){
+        if(hand.back() == 12){
+            m = 9;
+        } else {
+            m = 8;
+        }
+    } else if(is_straight){
+        m = 4;
+    } else if(is_flush){
+        m = 5;
+    }
+
+    return m * 13 * 13;
+}
+
+int evaluate(const vector<int> &hand2){
+    vector<int> hand1 (hand2);
+    sort(hand1.begin(), hand1.end(), [](int a, int b) { return a % 13 < b % 13; });
+
+    vector<int> hand; vector<int> suit;
+    for (int j = 0; j < hand1.size(); ++j) {
+        hand.push_back(hand1[j] % 13);
+        suit.push_back(hand1[j] / 13);
+    }
+
+    hand.push_back(-1);
+    vector<vector<int>> top2 = retrieve_top(hand);
+    hand.pop_back();
+
+    int max_head = max(numerize_top(top2), numerize_global(hand, suit));
+
+    int hand_val = 0; int factor = 1;
+    for (int i = 0; i < hand.size(); ++i) {
+        hand_val += hand[i] * factor;
+        factor *= 13;
+    }
+    return max_head * factor + hand_val;
+}
+
+vector<int> pow52 = {1, 52, 52 * 52, 52 * 52 * 52, 52 * 52 * 52 * 52};
+
+int to_key(const vector<int> &hand){
+    int ret = 0;
+    for (int i = 0; i < hand.size(); ++i) {
+        ret += pow52[i] * hand[i];
+    }
+    return ret;
+}
+
+int to_ckey(const vector<int> & c_table, const vector<int> &hand){
+    int key = 0;
+    for (int i = 0; i < hand.size(); ++i) {
+        key += c_table[(i + 1) * 53 + hand[i]];
+    }
+    return key;
+}
+
+void fill_lookup_table(const vector<int> & c_table, vector<int> &table, vector<int> &hand){
+    if(hand.size() == 5){
+        print(hand); cout << endl;
+        table[to_ckey(c_table, hand)] = evaluate(hand);
+    } else {
+        for (int i = (hand.empty() ? 0 : (hand.back() + 1)); i <= 52 - ( 5 - hand.size()); ++i) {
+            hand.push_back(i);
+            fill_lookup_table(c_table, table, hand);
+            hand.pop_back();
+        }
+    }
+}
+
+vector<int> gen_lookup_table(){
+    vector<int> c_table = gen_combo_table(52, 5);
+    vector<int> table(c_table[5 * 53 + 52]);
+    vector<int> hand;
+    fill_lookup_table(c_table, table, hand);
+
+    return table;
+}
+
+
+
+
+================
+simulator.h
+
+//
+// Created by Victor on 5/21/20.
+//
+
+#ifndef SIMULATOR_H
+#define SIMULATOR_H
+#include "cards.h"
+#include "tools.h"
+#include <vector>
+
+using namespace std;
+
+class Simulator {
+private:
+    vector<int> get_remaining(vector<int> &comm_hand, vector<vector<int>> &known_hands);
+    vector<vector<int>> fill_empty(int N, vector<int> &comm_hand, vector<vector<int>> &known_hands, int players_unknown);
+    int evaluate_selection(vector<int> selection);
+    void update_winners(int my_val, int &max_val, int ix, vector<int> &winners);
+    void format_result(int N, vector<int> result);
+public:
+    vector<int> c_table = gen_combo_table(52, 5);
+    vector<int> table = read_vect("lookup_tablev3.bin");
+    vector<int> replace = {0,1,1,2,2,3,3,4,4,5,0,0,4,6,3,5,2,4,1,3,1,1,2,3,3,4,4,5,2,2,4,6,3,5,3,3,4,5,4,4};
+    int to_ckey(const vector<int> &hand);
+    vector<int> simulate(vector<int> &selection, vector<vector<int>> &known_hands, vector<int> &sample, int start);
+    vector<vector<int>> compute_probabilities(int N, vector<string>& comm_hand_str, vector<vector<string>>& known_hands_str, int players_unknown);
+    void print_results(int N, vector<vector<int>> hands, vector<vector<int>> results);
+    vector<vector<int>> calculate(int N, vector<int>comm_hand, vector<vector<int>>known_hands, int players_unknown);
+};
+
+#endif
+
+=======================
+
+simulator.cpp
+//
+// Fixed simulator.cpp with memory and bounds safety fixes
+//
+
+#include <vector>
+#include <iostream>
+#include <algorithm>
+#include "simulator.h"
+#include "tools.h"
+#include "samples.h" 
+#include "cards.h"
+
+using namespace std;
+
+int Simulator::to_ckey(const vector<int> &hand)
+{
+    int key = 0;
+    for (int i = 0; i < hand.size(); ++i)
+    {
+        key += c_table[(i + 1) * 53 + hand[i]];
+    }
+    return key;
+}
+
+vector<int> Simulator::get_remaining(vector<int> &comm_hand, vector<vector<int>> &known_hands){
+    vector<int> remaining;
+    vector<int> filled(52, 0);  // ✅ Инициализация нулями
+
+    for (int card : comm_hand){
+        if (card >= 0 && card < 52) {  // ✅ Проверка границ
+            filled[card] = 1;
+        }
+    }
+
+    for (const vector<int> &known_hand : known_hands){  // ✅ Ссылка для избежания копирования
+        for (int card : known_hand){
+            if (card >= 0 && card < 52) {  // ✅ Проверка границ
+                filled[card] = 1;
+            }
+        }
+    }
+
+    for (int i = 0; i < 52; ++i){
+        if (!filled[i]){
+            remaining.push_back(i);
+        }
+    }
+
+    return remaining;
+}
+
+vector<vector<int>> Simulator::fill_empty(int N, vector<int> &comm_hand, vector<vector<int>> &known_hands, int players_unknown){
+    vector<int> remaining = get_remaining(comm_hand, known_hands);
+    int c = players_unknown * 2 + 5 - comm_hand.size();
+
+    if ((int)remaining.size() < c) {
+        cerr << "[Error] Not enough cards remaining to fill empty slots" << endl;
+        return {};
+    }
+
+    vector<vector<int>> samples = gen_samples(N, c, remaining.size());
+
+    for (vector<int> &sample : samples)
+    {
+        for (int i = 0; i < c && i < (int)sample.size(); ++i)
+        {
+            if (sample[i] < (int)remaining.size()) {
+                sample[i] = remaining[sample[i]];
+            } else {
+                cerr << "[Warning] Sample index out of range" << endl;
+            }
+        }
+    }
+
+    return samples;
+}
+
+int Simulator::evaluate_selection(vector<int> selection){
+    sort(selection.begin(), selection.end());
+    vector<int> hand(5);
+    
+    // ✅ Безопасность: проверяем что selection достаточно большой
+    if (selection.size() < 7) {
+        cerr << "[Error] Selection vector size less than 7" << endl;
+        return -1;
+    }
+    
+    for (int i = 0; i < 5; ++i){
+        hand[i] = selection[i + 2];
+    }
+
+    int key = to_ckey(hand);
+    int max_score = table[key];
+
+    for (int j = 0; j < 40; j += 2){
+        int ix_k = (replace[j] + 1) * 53;
+        key += c_table[ix_k + selection[replace[j + 1]]] - c_table[ix_k + hand[replace[j]]];
+
+        hand[replace[j]] = selection[replace[j + 1]];
+        max_score = max(max_score, table[key]);
+    }
+    return max_score;
+}
+
+void Simulator::update_winners(int my_val, int &max_val, int ix, vector<int> &winners){
+    if (my_val > max_val){
+        winners = {ix};
+        max_val = my_val;
+    }
+    else if (my_val == max_val){
+        winners.push_back(ix);
+    }
+}
+
+vector<int> Simulator::simulate(vector<int> &selection, vector<vector<int>> &known_hands, vector<int> &sample, int start){
+    vector<int> winners;
+    int max_val = 0;
+
+    // ✅ Проверяем размер selection
+    if (selection.size() < 7) {
+        selection.resize(7);
+    }
+
+    for (int i = 0; i < known_hands.size(); i++){
+        if (known_hands[i].size() < 2) continue;  // ✅ Проверка размера руки
+
+        selection[5] = known_hands[i][0];
+        selection[6] = known_hands[i][1];
+
+        update_winners(evaluate_selection(selection), max_val, i, winners);
+    }
+
+    for (int i = 0; start + i * 2 + 1 < (int)sample.size(); i ++){
+        selection[5] = sample[start + i * 2];
+        selection[6] = sample[start + i * 2 + 1];
+
+        update_winners(evaluate_selection(selection), max_val, known_hands.size() + i, winners);
+    }
+
+    return winners;
+}
+
+vector<vector<int>> Simulator::calculate(int N, vector<int>comm_hand, vector<vector<int>>known_hands, int players_unknown){
+    vector<vector<int>> samples = fill_empty(N, comm_hand, known_hands, players_unknown);
+    if (samples.empty()) {
+        cerr << "[Error] No samples available for calculation" << endl;
+        return {};
+    }
+    vector<int> selection(7);
+    vector<vector<int>> results(known_hands.size() + players_unknown, vector<int>(2, 0));
+
+    for (int i = 0; i < (int)comm_hand.size(); ++i){
+        if (i < 7) {
+            selection[i] = comm_hand[i];
+        }
+    }
+    
+    int s_comm = 5 - (int)comm_hand.size();
+
+    int cnt = 0;
+    for (const vector<int> &sample : samples){
+        cnt++;
+
+        for (int i = 0; i < s_comm && i < (int)sample.size(); ++i){
+            selection[4 - i] = sample[i];
+        }
+
+        vector<int> winners = simulate(selection, known_hands, const_cast<vector<int>&>(sample), s_comm);
+        
+        if (winners.size() == 1) {
+            results[winners[0]][0]++;
+        } else {
+            for (int winner : winners) {
+                results[winner][1]++;
+            }
+        }
+    }
+
+    return results;
+}
+
+void Simulator::print_results(int N, vector<vector<int>> hands, vector<vector<int>> results) {
+    for (int i = 0; i < (int)hands.size(); i++) {
+        print_hand(hands[i]);
+        format_result(N, results[i]);
+    }
+
+    int unknown = results.size() - (int)hands.size();
+    if (unknown > 0) {
+        float ties = 0;
+        float wins = 0;
+        float factor = 100.0/N/unknown;
+
+        for (int i=hands.size(); i < (int)results.size(); i++){
+            wins += results[i][0];
+            ties += results[i][1];
+        }
+        printf("?? ?? %6.3f  %6.3f (x%d random hands)\n", wins*factor, ties*factor, unknown);
+    }
+}
+
+void Simulator::format_result(int N, vector<int> result) {
+    printf("%6.3f  %6.3f\n", result[0]*100.0/N, result[1]*100.0/N);
+}
+
+vector<vector<int>> Simulator::compute_probabilities(int N, vector<string>& comm_hand_str, vector<vector<string>>& known_hands_str, int players_unknown){
+
+    clock_t start = clock();
+    
+    vector<int> comm_hand = convert_hand(comm_hand_str);
+    
+    vector<vector<int>> known_hands;
+
+    for (auto& known_hand_str : known_hands_str) { 
+        known_hands.push_back(convert_hand(known_hand_str));
+    }
+
+    vector<vector<int>> results = calculate(N, comm_hand, known_hands, players_unknown);
+
+    cout << "\nHand   Win %   Tie %\n" << endl;
+    print_results(N, known_hands, results);
+
+    clock_t stop = clock();
+    double elapsed = (double)(stop - start) / CLOCKS_PER_SEC;
+    printf("\nTime elapsed: %.5fs\n", elapsed);
+
+    return results;
+}
+====================
+
+main.cpp
+
+#include <iostream>
+#include <sstream>
+#include <vector>
+#include <algorithm>
+#include "simulator.h"
+using namespace std;
+
+bool isValidCard(const string& card) {
+    if (card.length() != 2) return false;
+    
+    char rank = card[0];
+    char suit = card[1];
+    
+    // Валидные ранги: 2-9, T, J, Q, K, A
+    bool valid_rank = (rank >= '2' && rank <= '9') || 
+                      rank == 'T' || rank == 'J' || 
+                      rank == 'Q' || rank == 'K' || rank == 'A';
+    
+    // Валидные масти: c, d, h, s
+    bool valid_suit = suit == 'c' || suit == 'd' || 
+                      suit == 'h' || suit == 's';
+    
+    return valid_rank && valid_suit;
+}
+
+vector<string> parseCards(const string& input) {
+    vector<string> cards;
+    if (input.empty()) return cards;
+    
+    stringstream ss(input);
+    string card;
+    
+    while (getline(ss, card, ',')) {
+        // Убираем пробелы
+        card.erase(remove(card.begin(), card.end(), ' '), card.end());
+        
+        if (!card.empty() && isValidCard(card)) {
+            cards.push_back(card);
+        } else if (!card.empty()) {
+            cerr << "Invalid card: " << card << endl;
+            return {}; // Возвращаем пустой вектор при ошибке
+        }
+    }
+    return cards;
+}
+
+int main(int argc, char* argv[]) {
+    if (argc < 4) {
+        cout << "Usage: ./poker_test <board_cards> <known_hands> <opponents>" << endl;
+        cout << "Example: ./poker_test '9c,Th,Jd' 'Ad,Kh|2c,7d' 2" << endl;
+        cout << "Board can be empty: '' for preflop" << endl;
+        return 1;
+    }
+    
+    try {
+        // Парсинг board cards с валидацией
+        vector<string> comm_hand = parseCards(argv[1]);
+        if (comm_hand.size() > 5) {
+            cerr << "Error: Board cannot have more than 5 cards" << endl;
+            return 1;
+        }
+        
+        // Парсинг known hands с валидацией
+        vector<vector<string>> known_hands;
+        string hands_input = argv[2];
+        
+        if (!hands_input.empty()) {
+            stringstream hands_stream(hands_input);
+            string hand_pair;
+            
+            while (getline(hands_stream, hand_pair, '|')) {
+                vector<string> hand = parseCards(hand_pair);
+                
+                if (hand.size() != 2) {
+                    cerr << "Error: Each hand must have exactly 2 cards, got " 
+                         << hand.size() << " in '" << hand_pair << "'" << endl;
+                    return 1;
+                }
+                
+                known_hands.push_back(hand);
+            }
+        }
+        
+        if (known_hands.empty()) {
+            cerr << "Error: At least one known hand is required" << endl;
+            return 1;
+        }
+        
+        // Валидация количества противников
+        int opponents = stoi(argv[3]);
+        if (opponents < 0 || opponents > 8) {
+            cerr << "Error: Opponents must be 0-8, got " << opponents << endl;
+            return 1;
+        }
+        
+        // Проверка на дубликаты карт
+        vector<string> all_cards = comm_hand;
+        for (const auto& hand : known_hands) {
+            all_cards.insert(all_cards.end(), hand.begin(), hand.end());
+        }
+        
+        sort(all_cards.begin(), all_cards.end());
+        auto it = unique(all_cards.begin(), all_cards.end());
+        if (it != all_cards.end()) {
+            cerr << "Error: Duplicate cards detected" << endl;
+            return 1;
+        }
+        
+        // Отладочная информация (опционально)
+        cout << "Board: ";
+        for (const auto& card : comm_hand) cout << card << " ";
+        cout << (comm_hand.empty() ? "(preflop)" : "") << endl;
+        
+        cout << "Known hands: ";
+        for (size_t i = 0; i < known_hands.size(); i++) {
+            cout << known_hands[i][0] << known_hands[i][1];
+            if (i < known_hands.size() - 1) cout << " vs ";
+        }
+        cout << endl;
+        
+        cout << "Opponents: " << opponents << endl;
+        cout << "Simulating..." << endl;
+        
+        // Создаем симулятор и запускаем расчет
+        Simulator sim;
+        int N = 100000; // Уменьшили для стабильности
+        
+        vector<vector<int>> results = sim.compute_probabilities(N, comm_hand, known_hands, opponents);
+        
+        // JSON вывод для Python интеграции
+        cout << "\n{\"results\":[";
+        for (size_t i = 0; i < results.size(); ++i) {
+            cout << "{\"hand\":\"" << known_hands[i][0] << known_hands[i][1] 
+                 << "\",\"win\":" << results[i][0] 
+                 << ",\"tie\":" << results[i][1] << "}";
+            if (i < results.size() - 1) cout << ",";
+        }
+        cout << "],\"simulations\":" << N << "}" << endl;
+        
+    } catch (const invalid_argument& e) {
+        cerr << "Error parsing opponents count: " << argv[3] << endl;
+        return 1;
+    } catch (const exception& e) {
+        cerr << "Unexpected error: " << e.what() << endl;
+        return 1;
+    }
+    exit(0);
+    return 0;
+}
+
+==========================

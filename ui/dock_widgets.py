@@ -165,34 +165,9 @@ class TableConfigDock(BaseDockWidget):
         
         layout.addWidget(size_group)
         
-        # Game type section
-        type_group = QGroupBox("Game Type")
-        type_layout = QVBoxLayout(type_group)
-        type_layout.setSpacing(4)
-        
-        game_types = [
-            ("Cash Game", GameType.CASH),
-            ("Tournament", GameType.TOURNAMENT)
-        ]
-        
-        for label, game_type in game_types:
-            btn = QRadioButton(label)
-            btn.setProperty("game_type", game_type)
-            btn.setStyleSheet("font-size: 11px; padding: 3px;")
-            
-            if game_type == GameType.CASH:
-                btn.setChecked(True)
-            
-            self.game_type_group.addButton(btn)
-            type_layout.addWidget(btn)
-        
-        layout.addWidget(type_group)
-        layout.addStretch()
-        
         # Connect signals
         self.table_size_group.buttonClicked.connect(self._on_table_size_clicked)
-        self.game_type_group.buttonClicked.connect(self._on_game_type_clicked)
-    
+        
     def _on_table_size_clicked(self):
         """Handle table size button click"""
         checked_btn = self.table_size_group.checkedButton()
@@ -200,26 +175,12 @@ class TableConfigDock(BaseDockWidget):
             table_size = checked_btn.property("table_size")
             self.table_size_changed.emit(table_size)
     
-    def _on_game_type_clicked(self):
-        """Handle game type button click"""
-        checked_btn = self.game_type_group.checkedButton()
-        if checked_btn:
-            game_type = checked_btn.property("game_type")
-            self.game_type_changed.emit(game_type)
-    
     def get_table_size(self) -> TableSize:
         """Get currently selected table size"""
         checked_btn = self.table_size_group.checkedButton()
         if checked_btn:
             return checked_btn.property("table_size")
         return TableSize.SIX_MAX
-    
-    def get_game_type(self) -> GameType:
-        """Get currently selected game type"""
-        checked_btn = self.game_type_group.checkedButton()
-        if checked_btn:
-            return checked_btn.property("game_type")
-        return GameType.CASH
 
 
 class CardsDock(BaseDockWidget):

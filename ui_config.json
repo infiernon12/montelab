@@ -1,9 +1,9 @@
 {
   "window_geometry": {
-    "x": 725,
-    "y": 164,
-    "width": 535,
-    "height": 786,
+    "x": 216,
+    "y": 43,
+    "width": 1232,
+    "height": 969,
     "maximized": false
   },
   "dock_states": {
@@ -16,15 +16,10 @@
     },
     "cards": {
       "name": "cards",
-      "floating": true,
+      "floating": false,
       "visible": true,
       "area": "left",
-      "geometry": {
-        "x": 341,
-        "y": 301,
-        "width": 323,
-        "height": 555
-      }
+      "geometry": null
     },
     "analysis": {
       "name": "analysis",
@@ -35,22 +30,17 @@
     },
     "image_preview": {
       "name": "image_preview",
-      "floating": true,
+      "floating": false,
       "visible": true,
       "area": "right",
-      "geometry": {
-        "x": 1317,
-        "y": 360,
-        "width": 266,
-        "height": 216
-      }
+      "geometry": null
     }
   },
   "roi": [
-    930,
-    184,
-    440,
-    671
+    3106,
+    302,
+    291,
+    461
   ],
   "theme": "dark",
   "font_scale": 1.0,
