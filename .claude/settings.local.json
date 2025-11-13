@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(C:/MonteLab/venv31011/Scripts/python.exe:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

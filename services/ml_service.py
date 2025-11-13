@@ -41,7 +41,7 @@ class MLService:
             logger.info("Warming up models...")
             dummy_frame = np.zeros((640, 640, 3), dtype=np.uint8)
             try:
-                _ = detector.predict(dummy_frame, confidence_threshold=0.9)
+                _ = detector.predict(dummy_frame, confidence_threshold=0.3)
                 dummy_crop = np.zeros((224, 224, 3), dtype=np.uint8)
                 _ = classifier.classify_batch([dummy_crop])  # Test batch path
                 logger.info("✅ Model warmup completed")

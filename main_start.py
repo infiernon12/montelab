@@ -274,7 +274,7 @@ def initialize_services():
         # Model paths
         script_dir = Path(__file__).parent
 
-        yolo_path = script_dir / "models" / "board_player_detector_v4.pt"
+        yolo_path = script_dir / "models" / "epoch_50_ckpt.pth"
         resnet_path = script_dir / "models" / "fine_tuned_resnet_cards_240EPOCH.pt"
 
         # Auto-detect GPU with fallback to CPU

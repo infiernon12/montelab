@@ -1,9 +1,9 @@
 {
   "window_geometry": {
-    "x": 216,
-    "y": 43,
-    "width": 1232,
-    "height": 969,
+    "x": 278,
+    "y": 50,
+    "width": 882,
+    "height": 946,
     "maximized": false
   },
   "dock_states": {
@@ -30,17 +30,22 @@
     },
     "image_preview": {
       "name": "image_preview",
-      "floating": false,
+      "floating": true,
       "visible": true,
       "area": "right",
-      "geometry": null
+      "geometry": {
+        "x": 1338,
+        "y": 55,
+        "width": 533,
+        "height": 653
+      }
     }
   },
   "roi": [
-    3106,
-    302,
-    291,
-    461
+    2693,
+    251,
+    424,
+    641
   ],
   "theme": "dark",
   "font_scale": 1.0,
