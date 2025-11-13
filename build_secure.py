@@ -63,6 +63,9 @@ class SecureBuilder:
             'ui/widgets/selection_overlay.py',
             # 'ui/windows/main_window.py',  # Excluded - imports MLWorker, MLService
             # 'ui/windows/adaptive_main_window.py',  # Excluded - imports MLWorker, MLService
+
+            # Entry point with license validation (CRITICAL TO COMPILE!)
+            'main_start.py',  # Contains secret_key - must be protected!
         ]
 
         # Modules to KEEP as Python (neural networks + dependencies)
@@ -78,9 +81,8 @@ class SecureBuilder:
             'ui/windows/main_window.py',  # Imports MLWorker, MLService
             'ui/windows/adaptive_main_window.py',  # Imports MLWorker, MLService
 
-            # Entry points
-            'main_start.py',  # Entry point (PyInstaller handles it)
-            'main_secure.py',  # Entry point
+            # Entry point (minimal wrapper)
+            'main_secure.py',  # Calls main_start.main() - PyInstaller entry point
         ]
 
     def log(self, message, level="INFO"):
@@ -175,6 +177,7 @@ class SecureBuilder:
         self.step("Compiling modules with Nuitka")
 
         self.log(f"Compiling {len(self.nuitka_modules)} modules...", "INFO")
+        self.log("🔒 Including: main_start.py (protects secret_key)", "SUCCESS")
         self.log("⚠️  Excluding: ml/*, ml_service.py, ml_worker.py, ui/windows/*", "WARNING")
         self.log("ℹ️  UI windows excluded (they import ML modules)", "INFO")
         self.log("⏱️  Estimated time: 10-20 minutes", "INFO")
