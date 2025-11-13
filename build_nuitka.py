@@ -81,11 +81,28 @@ def build_with_nuitka():
         # Включить main_start (с логикой лицензии) - будет скомпилирован
         "--include-module=main_start",
 
+        # Явно включить модули YOLOX
+        "--include-module=yolox.exp",
+        "--include-module=yolox.utils",
+        "--include-module=yolox.data",
+        "--include-module=yolox.models",
+
         # Следовать все импорты
         "--follow-imports",
 
         # Не компилировать detector.py
         "--nofollow-import-to=ml.detector",
+
+        # Плагины для Qt и PyTorch
+        "--enable-plugin=pyside6",
+        "--enable-plugin=torch",
+
+        # Исключить ненужные тяжелые модули
+        "--nofollow-import-to=sympy",
+        "--nofollow-import-to=matplotlib.mplot3d",
+        "--nofollow-import-to=mpl_toolkits.mplot3d",
+        "--nofollow-import-to=scipy.optimize",
+        "--nofollow-import-to=pandas.plotting",
 
         # Шифрование Python кода (кроме исключенных)
         "--python-flag=-O",
