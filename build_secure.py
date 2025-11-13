@@ -54,23 +54,31 @@ class SecureBuilder:
             'services/analysis_service.py',
             'services/improved_abc_recommendations.py',
 
-            # UI widgets
+            # UI widgets (but NOT windows - they import ML modules)
             'ui/hwid_dialog.py',
             'ui/styles.py',
             'ui/ui_config.py',
-            'ui/dock_widgets.py',
+            # 'ui/dock_widgets.py',  # Excluded - may import ml_worker
             'ui/widgets/card_input.py',
             'ui/widgets/selection_overlay.py',
-            'ui/windows/main_window.py',
-            'ui/windows/adaptive_main_window.py',
+            # 'ui/windows/main_window.py',  # Excluded - imports MLWorker, MLService
+            # 'ui/windows/adaptive_main_window.py',  # Excluded - imports MLWorker, MLService
         ]
 
         # Modules to KEEP as Python (neural networks + dependencies)
         self.excluded_from_compilation = [
+            # ML modules
             'ml/detector.py',  # Neural networks
             'ml/__init__.py',  # Imports detector
             'services/ml_service.py',  # Uses detector
             'ui/ml_worker.py',  # Uses ml_service
+
+            # UI that imports ML
+            'ui/dock_widgets.py',  # May import ml_worker
+            'ui/windows/main_window.py',  # Imports MLWorker, MLService
+            'ui/windows/adaptive_main_window.py',  # Imports MLWorker, MLService
+
+            # Entry points
             'main_start.py',  # Entry point (PyInstaller handles it)
             'main_secure.py',  # Entry point
         ]
@@ -167,7 +175,8 @@ class SecureBuilder:
         self.step("Compiling modules with Nuitka")
 
         self.log(f"Compiling {len(self.nuitka_modules)} modules...", "INFO")
-        self.log("⚠️  Excluding: ml/detector.py, ml_service.py, ml_worker.py", "WARNING")
+        self.log("⚠️  Excluding: ml/*, ml_service.py, ml_worker.py, ui/windows/*", "WARNING")
+        self.log("ℹ️  UI windows excluded (they import ML modules)", "INFO")
         self.log("⏱️  Estimated time: 10-20 minutes", "INFO")
 
         compiled_count = 0

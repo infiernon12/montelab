@@ -9,14 +9,16 @@
 ### ✅ Что компилируется (Nuitka)
 - **Core modules**: domain, poker logic
 - **Utils**: HWID, license, screen capture
-- **Services**: analysis service
-- **UI**: widgets, windows, dialogs
+- **Services**: analysis service (НЕ ml_service!)
+- **UI**: только widgets и dialogs (НЕ windows!)
 
 ### ⚠️ Что НЕ компилируется (остается как Python)
 - **ml/detector.py** - нейросети YOLO и ResNet
 - **ml/__init__.py** - импорт detector
 - **services/ml_service.py** - использует detector
 - **ui/ml_worker.py** - использует ml_service
+- **ui/windows/*.py** - импортируют MLWorker и MLService
+- **ui/dock_widgets.py** - может импортировать ml_worker
 - **Ultralytics** и PyTorch - уже скомпилированы в C++
 
 ### 💡 Почему так?
@@ -25,6 +27,35 @@
 - Быстрее сборка (10-20 мин вместо часов)
 - Легче отладка ML кода
 - ML фреймворки не стоит компилировать
+
+### ⚠️ ВАЖНО: Почему UI windows не компилируются?
+
+**Проблема цепочки импортов:**
+```python
+ui/windows/main_window.py (пытаемся скомпилировать)
+  └── from ui.ml_worker import MLWorker
+        └── from services.ml_service import MLService
+              └── from ml.detector import TableCardDetector
+                    └── from ultralytics import YOLO  # ❌ Проблема!
+```
+
+**Что происходит:**
+1. Nuitka компилирует `main_window.py` → `main_window.pyd`
+2. Скомпилированный файл содержит импорт `MLWorker`
+3. `MLWorker` импортирует `ml_service`
+4. `ml_service` импортирует `detector`
+5. `detector` импортирует `ultralytics`
+
+**Потенциальные проблемы:**
+- Nuitka может попытаться анализировать всю цепочку
+- PyInstaller может не увидеть транзитивные зависимости
+- Возможны конфликты путей импорта в runtime
+- Сложнее отладка при ошибках импорта
+
+**Решение:**
+- НЕ компилируем модули, которые импортируют ML
+- Оставляем UI windows как обычный Python код
+- Это безопасно и не влияет на производительность (UI не критичен для скорости)
 
 ---
 
@@ -112,30 +143,41 @@ services/analysis_service.py
 services/improved_abc_recommendations.py
 ```
 
-**UI (8 модулей):**
+**UI (5 модулей):**
 ```
 ui/hwid_dialog.py
 ui/styles.py
 ui/ui_config.py
-ui/dock_widgets.py
 ui/widgets/card_input.py
 ui/widgets/selection_overlay.py
-ui/windows/main_window.py
-ui/windows/adaptive_main_window.py
 ```
 
-**Итого: ~23 модуля**
+**Итого: ~20 модулей**
 
 ### Модули исключенные из компиляции
 
 ```
+# ML modules
 ml/detector.py          # Нейросети
 ml/__init__.py          # Импорт detector
 services/ml_service.py  # Использует detector
 ui/ml_worker.py         # Использует ml_service
+
+# UI that imports ML (ВАЖНО!)
+ui/dock_widgets.py      # Может импортировать ml_worker
+ui/windows/main_window.py          # Импортирует MLWorker, MLService
+ui/windows/adaptive_main_window.py # Импортирует MLWorker, MLService
+
+# Entry points
 main_start.py           # Entry point
 main_secure.py          # Entry point
 ```
+
+**Почему UI windows не компилируются:**
+- Они импортируют `MLWorker` и `MLService`
+- Это создает цепочку зависимостей: UI → ml_worker → ml_service → detector → ultralytics
+- Nuitka с `--nofollow-imports` не скомпилирует зависимости, но может быть конфликт
+- Безопаснее оставить их как Python
 
 ---
 
