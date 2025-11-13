@@ -45,10 +45,17 @@ def clean_build_dirs():
     print("🧹 Очистка предыдущих сборок...")
     dirs_to_clean = ["build", "dist", "main_secure.dist", "main_secure.build"]
 
-    for dir_name in dirs_to_clean:
-        if Path(dir_name).exists():
-            shutil.rmtree(dir_name)
-            print(f"  ✓ Удалено: {dir_name}")
+    try:
+        for dir_name in dirs_to_clean:
+            if Path(dir_name).exists():
+                shutil.rmtree(dir_name)
+                print(f"  ✓ Удалено: {dir_name}")
+
+        print("  ✓ Очистка завершена")
+        return True
+    except Exception as e:
+        print(f"  ❌ Ошибка очистки: {e}")
+        return False
 
 
 def build_with_nuitka():

@@ -35,15 +35,22 @@ def clean_build_dirs():
     dirs_to_clean = ["build", "dist", "__pycache__"]
     files_to_clean = ["MonteLab.spec"]
 
-    for dir_name in dirs_to_clean:
-        if Path(dir_name).exists():
-            shutil.rmtree(dir_name)
-            print(f"  ✓ Удалено: {dir_name}")
+    try:
+        for dir_name in dirs_to_clean:
+            if Path(dir_name).exists():
+                shutil.rmtree(dir_name)
+                print(f"  ✓ Удалено: {dir_name}")
 
-    for file_name in files_to_clean:
-        if Path(file_name).exists():
-            Path(file_name).unlink()
-            print(f"  ✓ Удалено: {file_name}")
+        for file_name in files_to_clean:
+            if Path(file_name).exists():
+                Path(file_name).unlink()
+                print(f"  ✓ Удалено: {file_name}")
+
+        print("  ✓ Очистка завершена")
+        return True
+    except Exception as e:
+        print(f"  ❌ Ошибка очистки: {e}")
+        return False
 
 
 def create_spec_file():
