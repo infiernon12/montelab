@@ -99,10 +99,6 @@ def build_with_nuitka():
 
         # Исключить ненужные тяжелые модули
         "--nofollow-import-to=sympy",
-        "--nofollow-import-to=matplotlib.mplot3d",
-        "--nofollow-import-to=mpl_toolkits.mplot3d",
-        "--nofollow-import-to=scipy.optimize",
-        "--nofollow-import-to=pandas.plotting",
 
         # Шифрование Python кода (кроме исключенных)
         "--python-flag=-O",
